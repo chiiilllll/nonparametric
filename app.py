@@ -16,7 +16,7 @@ st.title("📊 無母數統計 AI Agent")
 st.write("上傳你的 CSV 資料，AI 會自動幫你寫程式並跑完無母數檢定。")
 
 # 左側邊欄讓使用者輸入 API Key
-api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
+api_key = st.secrets["GEMINI_API_KEY"]
 # 主畫面提供上傳按鈕
 uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
 
