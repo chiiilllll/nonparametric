@@ -70,7 +70,7 @@ if uploaded_file and api_key:
                 user_prompt = f"資料如下：\n\n{csv_string}\n\n請執行 SOP。"
 
                 response = client.models.generate_content(
-                    model="gemini-3.6-flash",
+                    model=""gemini-1.5-pro",
                     contents=user_prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_instruct,
