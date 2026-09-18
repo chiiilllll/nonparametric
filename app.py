@@ -12,88 +12,112 @@ import pandas as pd
 from google import genai
 from google.genai import types
 
-st.title("📊 無母數統計 AI Agent")
-st.write("上傳你的 CSV 資料，AI 會自動幫你寫程式並跑完無母數檢定。")
+st.title("📊 互動式無母數統計 AI Agent")
+st.markdown("上傳資料後，Agent 會與你對答確認需求，依照標準 SOP 逐步分析，最後產出完整報告。")
 
-# 左側邊欄讓使用者輸入 API Key
-api_key = st.secrets["GEMINI_API_KEY"]
-# 主畫面提供上傳按鈕
+# 取得金鑰 (相容於 Streamlit Cloud 的 secrets 與本機端測試)
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except:
+    api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
+
+# 1. 檔案上傳區塊
 uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
 
+# 設置一個按鈕讓使用者可以隨時清空記憶重來
+if st.sidebar.button("🗑️ 清空對話重新開始"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
 if uploaded_file and api_key:
-    # 讀取並顯示資料
-    df = pd.read_csv(uploaded_file)
-    st.write("### 預覽資料", df.head())
+    # 2. 初始化對話記憶 (只在第一次上傳檔案時執行)
+    if "chat_session" not in st.session_state:
+        df = pd.read_csv(uploaded_file)
+        csv_string = df.to_csv(index=False)
+        
+        client = genai.Client(api_key=api_key)
+        
+        # 結合互動引導與你專屬的統計 SOP
+        sys_instruct = """
+        你是一位嚴謹且精通無母數統計學的資深數據顧問。
+        你的任務是與使用者「互動對答」，逐步引導他們完成無母數統計分析。
 
-# 🌟 新增：讓使用者可以輸入自己的 Prompt
-    custom_prompt = st.text_area(
-        "請輸入你的具體分析需求（可留白）：", 
-        placeholder="例如：請幫我比較 A 與 B 欄位，並畫出小提琴圖...",
-        height=100
-    )
+        【互動階段要求】
+        1. 初步確認：收到資料後，先簡述資料欄位，並主動詢問使用者：「你想檢驗哪兩個變數的關係？或是想檢驗什麼假設？」
+        2. 逐步分析：收到使用者的回答後，在背景寫 Python 程式碼執行檢定，請嚴格遵守下方的【Agent 思考與執行工作流 SOP】。
+        3. 報告總結：當使用者說「請給我完整報告」或分析告一段落時，請整理前面的對答，嚴格依照下方的【回應格式規範】產出最終報告。
 
-    # 啟動分析的按鈕
-    if st.button("🚀 開始自動分析"):
-        with st.spinner("Agent 思考與執行程式碼中..."):
-            try:
-                client = genai.Client(api_key=api_key)
-                csv_string = df.to_csv(index=False)
+        【Agent 思考與執行工作流 SOP】
+        1. 資料探索與常態性檢定：
+           - 檢查資料型態與缺失值。
+           - 執行常態性檢定（如 Shapiro-Wilk test 或 Kolmogorov-Smirnov Test），若確認資料不符合常態分佈或為小樣本，則進入無母數檢定流程。
 
-                sys_instruct = """
-                你是一位嚴謹且精通無母數統計學的資深數據顧問。你的任務是接收使用者上傳的資料集，透過編寫與執行 Python 程式碼來完成端到端的無母數統計檢定，並產出具備學術水準的分析報告。
+        2. 樣本結構分析（嚴格判斷）：
+           - 判斷組數：資料是「單樣本（One Sample）」、「雙樣本（Two Samples）」還是「多樣本（Multiple Samples, 3組以上）」。
+           - 判斷獨立性：若為雙樣本或多樣本，請從資料結構判斷樣本之間是「獨立（Independent）」還是「配對/相關（Paired/Related）」。
 
-【Agent 思考與執行工作流 SOP】
+        3. 檢定方法決策與執行（依據上述結構選擇）：
+           - 單樣本：執行 One Sample Sign Test 或 One Sample Wilcoxon Signed-Rank Test。
+           - 兩獨立樣本：執行 Mann Whitney U Test (Wilcoxon Rank Sum Test)。
+           - 兩配對樣本：執行 Wilcoxon signed ranks test。
+           - 多獨立樣本：執行 Kruskal-Wallis Test。
+           - 多配對樣本：執行 Friedman Test。
 
-1. 資料探索與常態性檢定：
-   - 檢查資料型態與缺失值。
-   - 執行常態性檢定（如 Shapiro-Wilk test 或 Kolmogorov-Smirnov Test），若確認資料不符合常態分佈或為小樣本，則進入無母數檢定流程。
+        4. 事後多重比較（Post-hoc Multiple Comparisons）：
+           - 若執行 Kruskal-Wallis Test 或 Friedman Test 且結果顯著 (p < 0.05)，你「必須」自動補上事後檢定（如 Dunn's Test 等）。
+           - 執行事後檢定時，務必套用 p-value 校正（如 Bonferroni 或 Holm 方法）以避免型一錯誤。
 
-2. 樣本結構分析（嚴格判斷）：
-   - 判斷組數：資料是「單樣本（One Sample）」、「雙樣本（Two Samples）」還是「多樣本（Multiple Samples, 3組以上）」。
-   - 判斷獨立性：若為雙樣本或多樣本，請從資料結構判斷樣本之間是「獨立（Independent）」還是「配對/相關（Paired/Related）」。
+        5. 視覺化：
+           - 撰寫 Python 程式碼繪製能呈現資料分佈的圖表（推薦盒鬚圖、小提琴圖疊加散佈點）。
 
-3. 檢定方法決策與執行（依據上述結構選擇）：
-   - 單樣本：執行 One Sample Sign Test 或 One Sample Wilcoxon Signed-Rank Test。
-   - 兩獨立樣本：執行 Mann Whitney U Test (Wilcoxon Rank Sum Test)。
-   - 兩配對樣本：執行 Wilcoxon signed ranks test。
-   - 多獨立樣本：執行 Kruskal-Wallis Test。
-   - 多配對樣本：執行 Friedman Test。
+        【回應格式規範】
+        產出報告請包含以下區塊：
+        - 資料結構解析： 說明判斷出的組數（單/雙/多樣本）與獨立性（獨立/配對），以及常態性檢定結果。
+        - 方法選擇： 說明為何選擇該無母數檢定方法。
+        - 整體檢定結果： 列出檢定統計量與 P-value。所有統計檢定假設（虛無假設與對立假設）請使用 LaTeX 呈現（例如 $H_0: M_1 = M_2$）。
+        - 多重比較結果（若有）： 列出事後檢定的各組兩兩比較 P-value（需標註已使用的校正方法）。
+        - 結論與建議： 用白話文解釋這些數字代表什麼實務或研究意義。
+        """
+        
+        config = types.GenerateContentConfig(
+            system_instruction=sys_instruct,
+            temperature=0.1,  # 統計分析需保持低隨機性
+            tools=[types.Tool(code_execution=types.ToolCodeExecution())]
+        )
+        
+        # 建立具備記憶的 Chat 物件
+        st.session_state.chat_session = client.chats.create(
+            model="gemini-3.6-flash", 
+            config=config
+        )
+        st.session_state.messages = []
+        
+        # 隱藏式地把資料傳給 Agent，並請它開場
+        initial_prompt = f"這是上傳的資料：\n\n{csv_string}\n\n請依據互動階段要求的第一步，簡單報告資料狀況並主動詢問我想分析什麼變數。"
+        with st.spinner("Agent 正在讀取資料..."):
+            response = st.session_state.chat_session.send_message(initial_prompt)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
 
-4. 事後多重比較（Post-hoc Multiple Comparisons）：
-   - 若執行 Kruskal-Wallis Test 或 Friedman Test 且結果顯著 (p < 0.05)，你「必須」自動補上事後檢定（如 Dunn's Test 等）。
-   - 執行事後檢定時，務必套用 p-value 校正（如 Bonferroni 或 Holm 方法）以避免型一錯誤。
+    # 3. 將歷史對話記錄渲染到畫面上
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-5. 視覺化：
-   - 撰寫 Python 程式碼繪製能呈現資料分佈的圖表（推薦盒鬚圖、小提琴圖疊加散佈點）。
-
-【回應格式規範】
-產出報告請包含以下區塊：
-- 資料結構解析： 說明判斷出的組數（單/雙/多樣本）與獨立性（獨立/配對），以及常態性檢定結果。
-- 方法選擇： 說明為何選擇該無母數檢定方法。
-- 整體檢定結果： 列出檢定統計量與 P-value。所有統計檢定假設（虛無假設與對立假設）請使用 LaTeX 呈現（例如 $H_0: M_1 = M_2$）。
-- 多重比較結果（若有）： 列出事後檢定的各組兩兩比較 P-value（需標註已使用的校正方法）。
-- 結論與建議： 用白話文解釋這些數字代表什麼實務或研究意義。
-                """
-                # 🌟 更新：將資料與使用者的自訂 Prompt 結合
-                if custom_prompt.strip() == "":
-                    # 如果使用者沒輸入，就用預設指令
-                    user_prompt = f"資料如下：\n\n{csv_string}\n\n請依據系統設定的 SOP 進行完整的無母數分析。"
-                else:
-                    # 如果使用者有輸入，就強制 AI 結合 SOP 與使用者指令
-                    user_prompt = f"資料如下：\n\n{csv_string}\n\n【使用者的特別指示】：\n{custom_prompt}\n\n請在滿足上述特別指示的前提下，嚴格遵守系統設定的 SOP 進行分析。"
-
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=sys_instruct,
-                        tools=[types.Tool(code_execution=types.ToolCodeExecution())],
-                    ),
-                )
-
-                st.markdown("---")
-                st.markdown("### 📝 分析報告")
-                st.markdown(response.text)
-
-            except Exception as e:
-                st.error(f"發生錯誤：{e}")
+    # 4. 處理使用者的對話輸入
+    if user_input := st.chat_input("輸入你的需求 (例如：我想比較新舊製程的差異，請給我完整報告...)"):
+        
+        # 顯示使用者的訊息
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        
+        # 傳送給 Gemini 並顯示 Agent 的回應
+        with st.chat_message("assistant"):
+            with st.spinner("Agent 思考與執行程式碼中..."):
+                try:
+                    response = st.session_state.chat_session.send_message(user_input)
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"發生錯誤：{e}")
