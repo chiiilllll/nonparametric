@@ -25,6 +25,13 @@ if uploaded_file and api_key:
     df = pd.read_csv(uploaded_file)
     st.write("### 預覽資料", df.head())
 
+# 🌟 新增：讓使用者可以輸入自己的 Prompt
+    custom_prompt = st.text_area(
+        "請輸入你的具體分析需求（可留白）：", 
+        placeholder="例如：請幫我比較 A 與 B 欄位，並畫出小提琴圖...",
+        height=100
+    )
+
     # 啟動分析的按鈕
     if st.button("🚀 開始自動分析"):
         with st.spinner("Agent 思考與執行程式碼中..."):
@@ -67,7 +74,13 @@ if uploaded_file and api_key:
 - 多重比較結果（若有）： 列出事後檢定的各組兩兩比較 P-value（需標註已使用的校正方法）。
 - 結論與建議： 用白話文解釋這些數字代表什麼實務或研究意義。
                 """
-                user_prompt = f"資料如下：\n\n{csv_string}\n\n請執行 SOP。"
+                # 🌟 更新：將資料與使用者的自訂 Prompt 結合
+                if custom_prompt.strip() == "":
+                    # 如果使用者沒輸入，就用預設指令
+                    user_prompt = f"資料如下：\n\n{csv_string}\n\n請依據系統設定的 SOP 進行完整的無母數分析。"
+                else:
+                    # 如果使用者有輸入，就強制 AI 結合 SOP 與使用者指令
+                    user_prompt = f"資料如下：\n\n{csv_string}\n\n【使用者的特別指示】：\n{custom_prompt}\n\n請在滿足上述特別指示的前提下，嚴格遵守系統設定的 SOP 進行分析。"
 
                 response = client.models.generate_content(
                     model="gemini-3.6-flash",
