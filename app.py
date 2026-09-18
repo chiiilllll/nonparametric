@@ -31,12 +31,17 @@ if st.sidebar.button("🗑️ 清空對話重新開始"):
     st.rerun()
 
 if uploaded_file and api_key:
+    # 🌟 解決 Client 斷線的關鍵：將 Client 物件也存入網頁記憶中保護起來
+    if "gemini_client" not in st.session_state:
+        st.session_state.gemini_client = genai.Client(api_key=api_key)
+
     # 2. 初始化對話記憶 (只在第一次上傳檔案時執行)
     if "chat_session" not in st.session_state:
         df = pd.read_csv(uploaded_file)
-        csv_string = df.to_csv(index=False)
         
-        client = genai.Client(api_key=api_key)
+        # 🌟 測試版寫法：避免整份檔案太大導致 ServerError，先只餵前 5 筆預覽
+        preview_csv = df.head(5).to_csv(index=False)
+        total_rows = len(df)
         
         # 結合互動引導與你專屬的統計 SOP
         sys_instruct = """
@@ -82,22 +87,29 @@ if uploaded_file and api_key:
         
         config = types.GenerateContentConfig(
             system_instruction=sys_instruct,
-            temperature=0.1,  # 統計分析需保持低隨機性
+            temperature=0.1,
             tools=[types.Tool(code_execution=types.ToolCodeExecution())]
         )
         
-        # 建立具備記憶的 Chat 物件
-        st.session_state.chat_session = client.chats.create(
+        # 🌟 注意這裡：改用 st.session_state.gemini_client 來建立聊天
+        st.session_state.chat_session = st.session_state.gemini_client.chats.create(
             model="gemini-3.6-flash", 
             config=config
         )
         st.session_state.messages = []
         
         # 隱藏式地把資料傳給 Agent，並請它開場
-        initial_prompt = f"這是上傳的資料：\n\n{csv_string}\n\n請依據互動階段要求的第一步，簡單報告資料狀況並主動詢問我想分析什麼變數。"
+        initial_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。請依據互動階段要求的第一步，簡單報告欄位狀況，並主動詢問我想分析什麼變數。"
+        
         with st.spinner("Agent 正在讀取資料..."):
-            response = st.session_state.chat_session.send_message(initial_prompt)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            try:
+                response = st.session_state.chat_session.send_message(initial_prompt)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            except Exception as e:
+                st.error(f"連線失敗，詳細錯誤：{e}")
+                # 刪除建立失敗的 session，避免網頁卡死
+                del st.session_state["chat_session"]
+                st.stop()
 
     # 3. 將歷史對話記錄渲染到畫面上
     for msg in st.session_state.messages:
