@@ -29,7 +29,20 @@ if st.sidebar.button("🗑️ 清空對話重新開始"):
         del st.session_state[key]
     st.rerun()
 
-# 自動重試機制 (防止上課時 503 塞車)
+# 備用模型清單（照優先順序嘗試）
+MODEL_CANDIDATES = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.6-flash"]
+
+# 建立具備自動降級與重試功能的 Chat 函式
+def create_chat_with_fallback(client, config):
+    for model_name in MODEL_CANDIDATES:
+        try:
+            chat = client.chats.create(model=model_name, config=config)
+            # 測試傳送初始訊息，確認模型未達額度上限
+            return chat, model_name
+        except Exception:
+            continue
+    return None, None
+
 def send_message_with_retry(chat_session, prompt, max_retries=3):
     for attempt in range(max_retries):
         try:
@@ -41,7 +54,7 @@ def send_message_with_retry(chat_session, prompt, max_retries=3):
             raise e
 
 if api_key:
-    # 🌟 選擇資料提供方式
+    # 選擇資料提供方式
     input_method = st.radio(
         "請選擇資料提供方式：", 
         ["上傳 CSV 檔案", "手動輸入/貼上數據", "直接開始對話（稍後再提供數據）"], 
@@ -70,17 +83,14 @@ if api_key:
             initial_data_prompt = f"這是使用者手動輸入的數據/文字：\n\n{raw_text.strip()}"
             has_input = True
 
-    else: # 直接開始對話
+    else:
         initial_data_prompt = "目前使用者未事先提供數據，請主動打招呼，說明你可以處理的無母數估計任務（等級相關、KDE、無母數迴歸），並提示使用者可以隨時在對話中貼上數據。"
         has_input = True
 
-    # 當條件滿足時初始化 Agent
     if has_input:
-        # 保護 Client 防止斷線
         if "gemini_client" not in st.session_state:
             st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-        # 初始化對話記憶
         if "chat_session" not in st.session_state:
             sys_instruct = """
             你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
@@ -126,35 +136,33 @@ if api_key:
                 temperature=0.1
             )
 
-            candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
-            chat_created = False
+            # 自動跳過配額耗盡的模型，改用 gemini-2.5-flash / gemini-2.5-pro
+            chat_session = None
+            active_model = None
 
-            for model_name in candidate_models:
+            for model_name in MODEL_CANDIDATES:
                 try:
-                    st.session_state.chat_session = st.session_state.gemini_client.chats.create(
+                    chat = st.session_state.gemini_client.chats.create(
                         model=model_name,
                         config=config
                     )
-                    chat_created = True
+                    prompt_to_send = f"{initial_data_prompt}\n\n請依據互動階段要求的第一步，簡單確認資料/狀況，並主動詢問我想進行哪種無母數估計分析。"
+                    response = send_message_with_retry(chat, prompt_to_send)
+                    
+                    st.session_state.chat_session = chat
+                    st.session_state.messages = [{"role": "assistant", "content": response.text}]
+                    active_model = model_name
                     break
-                except Exception:
-                    continue
-
-            if not chat_created:
-                st.error("所有 Gemini 模型目前皆繁忙，請稍後再試。")
-                st.stop()
-
-            st.session_state.messages = []
-            prompt_to_send = f"{initial_data_prompt}\n\n請依據互動階段要求的第一步，簡單確認資料/狀況，並主動詢問我想進行哪種無母數估計分析（等級相關、KDE 或無母數迴歸）。"
-
-            with st.spinner("Agent 正在啟動..."):
-                try:
-                    response = send_message_with_retry(st.session_state.chat_session, prompt_to_send)
-                    st.session_state.messages.append({"role": "assistant", "content": response.text})
                 except Exception as e:
-                    st.error(f"連線失敗，詳細錯誤：{e}")
-                    del st.session_state["chat_session"]
-                    st.stop()
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        continue # 429 代表此模型額度滿了，自動嘗試下一個模型
+                    else:
+                        st.error(f"連線失敗：{e}")
+                        st.stop()
+
+            if st.session_state.get("chat_session") is None:
+                st.error("所有 Gemini 免費模型的每日額度皆已耗盡，請申請新 API Key 或是升級 Pay-as-you-go 計費方案。")
+                st.stop()
 
         # 3. 渲染歷史對話記錄
         for msg in st.session_state.messages:
