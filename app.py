@@ -29,19 +29,8 @@ if st.sidebar.button("🗑️ 清空對話重新開始"):
         del st.session_state[key]
     st.rerun()
 
-# 備用模型清單（照優先順序嘗試）
-MODEL_CANDIDATES = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.6-flash"]
-
-# 建立具備自動降級與重試功能的 Chat 函式
-def create_chat_with_fallback(client, config):
-    for model_name in MODEL_CANDIDATES:
-        try:
-            chat = client.chats.create(model=model_name, config=config)
-            # 測試傳送初始訊息，確認模型未達額度上限
-            return chat, model_name
-        except Exception:
-            continue
-    return None, None
+# 🌟 更新為最新支援的模型清單
+MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
 def send_message_with_retry(chat_session, prompt, max_retries=3):
     for attempt in range(max_retries):
@@ -136,9 +125,8 @@ if api_key:
                 temperature=0.1
             )
 
-            # 自動跳過配額耗盡的模型，改用 gemini-2.5-flash / gemini-2.5-pro
-            chat_session = None
-            active_model = None
+            # 🌟 自動跳過 404 (舊模型下架) 或 429 (配額耗盡) 的模型，自動降級選用可用模型
+            st.session_state.chat_session = None
 
             for model_name in MODEL_CANDIDATES:
                 try:
@@ -151,17 +139,18 @@ if api_key:
                     
                     st.session_state.chat_session = chat
                     st.session_state.messages = [{"role": "assistant", "content": response.text}]
-                    active_model = model_name
                     break
                 except Exception as e:
-                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                        continue # 429 代表此模型額度滿了，自動嘗試下一個模型
+                    err_msg = str(e)
+                    # 當遇到了 404 (模型過期) 或 429 (額度滿)，自動嘗試下一個模型
+                    if "404" in err_msg or "NOT_FOUND" in err_msg or "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        continue
                     else:
                         st.error(f"連線失敗：{e}")
                         st.stop()
 
             if st.session_state.get("chat_session") is None:
-                st.error("所有 Gemini 免費模型的每日額度皆已耗盡，請申請新 API Key 或是升級 Pay-as-you-go 計費方案。")
+                st.error("所有備用 Gemini 模型目前皆無法連線（可能額度耗盡或網路問題），請更換 API Key 後重試。")
                 st.stop()
 
         # 3. 渲染歷史對話記錄
