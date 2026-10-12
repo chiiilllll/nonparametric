@@ -17,7 +17,7 @@ from google.genai.errors import ServerError, APIError
 st.title("📊 互動式無母數估計 AI Agent (R 語言版)")
 st.markdown("針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸** 提供 R 語言程式碼與專業估計分析。")
 
-# 🌟 關鍵修復：頂層全域初始化，確保 messages 絕對存在，防止 KeyError
+# 頂層全域初始化，確保 messages 恆存在，避免 KeyError
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -27,13 +27,13 @@ try:
 except:
     api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
 
-# 重置按鈕
+# 重置對話按鈕
 if st.sidebar.button("🗑️ 清空對話重新開始"):
     st.session_state.clear()
     st.rerun()
 
-# 備用模型清單
-MODEL_CANDIDATES = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+# 🌟 優先選擇現行支援的模型版本
+MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
 def send_message_with_retry(chat_session, prompt, max_retries=3):
     for attempt in range(max_retries):
@@ -127,6 +127,7 @@ if api_key:
                 temperature=0.1
             )
 
+            last_error = None
             for model_name in MODEL_CANDIDATES:
                 try:
                     chat = st.session_state.gemini_client.chats.create(
@@ -139,14 +140,16 @@ if api_key:
                     st.session_state.chat_session = chat
                     st.session_state.messages = [{"role": "assistant", "content": response.text}]
                     break
-                except Exception:
+                except Exception as e:
+                    last_error = e
                     continue
 
             if "chat_session" not in st.session_state:
-                st.error("無法建立對話，請檢查 API Key 配額或連線狀態。")
+                st.error(f"無法建立對話，詳細錯誤訊息：{last_error}")
+                st.info("提示：若錯誤訊息包含 429 RESOURCE_EXHAUSTED，表示目前 API Key 的每日免費額度已用完，請在 Google AI Studio 申請一把新的 API Key 填入 Streamlit Secrets。")
                 st.stop()
 
-        # 3. 渲染歷史對話記錄 (使用安全讀取)
+        # 3. 渲染歷史對話記錄
         for msg in st.session_state.get("messages", []):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
