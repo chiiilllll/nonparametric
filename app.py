@@ -17,7 +17,11 @@ from google.genai.errors import ServerError, APIError
 st.title("📊 互動式無母數估計 AI Agent (R 語言版)")
 st.markdown("針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸** 提供 R 語言程式碼與專業估計分析。")
 
-# 取得 API Key (相容 Streamlit Cloud Secrets 與本機測試)
+# 🌟 關鍵修復：頂層全域初始化，確保 messages 絕對存在，防止 KeyError
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# 取得 API Key
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except:
@@ -25,12 +29,11 @@ except:
 
 # 重置按鈕
 if st.sidebar.button("🗑️ 清空對話重新開始"):
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    st.session_state.clear()
     st.rerun()
 
-# 🌟 更新為最新支援的模型清單
-MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
+# 備用模型清單
+MODEL_CANDIDATES = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
 
 def send_message_with_retry(chat_session, prompt, max_retries=3):
     for attempt in range(max_retries):
@@ -43,7 +46,6 @@ def send_message_with_retry(chat_session, prompt, max_retries=3):
             raise e
 
 if api_key:
-    # 選擇資料提供方式
     input_method = st.radio(
         "請選擇資料提供方式：", 
         ["上傳 CSV 檔案", "手動輸入/貼上數據", "直接開始對話（稍後再提供數據）"], 
@@ -125,9 +127,6 @@ if api_key:
                 temperature=0.1
             )
 
-            # 🌟 自動跳過 404 (舊模型下架) 或 429 (配額耗盡) 的模型，自動降級選用可用模型
-            st.session_state.chat_session = None
-
             for model_name in MODEL_CANDIDATES:
                 try:
                     chat = st.session_state.gemini_client.chats.create(
@@ -140,21 +139,15 @@ if api_key:
                     st.session_state.chat_session = chat
                     st.session_state.messages = [{"role": "assistant", "content": response.text}]
                     break
-                except Exception as e:
-                    err_msg = str(e)
-                    # 當遇到了 404 (模型過期) 或 429 (額度滿)，自動嘗試下一個模型
-                    if "404" in err_msg or "NOT_FOUND" in err_msg or "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        continue
-                    else:
-                        st.error(f"連線失敗：{e}")
-                        st.stop()
+                except Exception:
+                    continue
 
-            if st.session_state.get("chat_session") is None:
-                st.error("所有備用 Gemini 模型目前皆無法連線（可能額度耗盡或網路問題），請更換 API Key 後重試。")
+            if "chat_session" not in st.session_state:
+                st.error("無法建立對話，請檢查 API Key 配額或連線狀態。")
                 st.stop()
 
-        # 3. 渲染歷史對話記錄
-        for msg in st.session_state.messages:
+        # 3. 渲染歷史對話記錄 (使用安全讀取)
+        for msg in st.session_state.get("messages", []):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
