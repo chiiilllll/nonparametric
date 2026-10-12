@@ -7,10 +7,12 @@ Original file is located at
     https://colab.research.google.com/drive/109IsyIy3gd9mXzAIew55AQv_nugA71jr
 """
 
+import time
 import streamlit as st
 import pandas as pd
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError, APIError
 
 st.title("📊 互動式無母數估計 AI Agent (R 語言版)")
 st.markdown("上傳資料後，Agent 會以 **R 語言** 進行對答，針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸** 提供 R 程式碼與專業分析。")
@@ -30,6 +32,17 @@ if st.sidebar.button("🗑️ 清空對話重新開始"):
         del st.session_state[key]
     st.rerun()
 
+# 🌟 自動重試機制：遇到 503 塞車時自動等待並重試，不讓網頁崩潰
+def send_message_with_retry(chat_session, prompt, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return chat_session.send_message(prompt)
+        except (ServerError, APIError) as e:
+            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < max_retries - 1:
+                time.sleep(2)  # 等待 2 秒後重試
+                continue
+            raise e
+
 if uploaded_file and api_key:
     # 保護 Client 防止斷線
     if "gemini_client" not in st.session_state:
@@ -41,7 +54,6 @@ if uploaded_file and api_key:
         preview_csv = df.head(5).to_csv(index=False)
         total_rows = len(df)
 
-        # 專屬於 R 語言與無母數估計的核心 SOP Prompt
         sys_instruct = """
         你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
         你的任務是與使用者互動對答，引導他們完成無母數估計任務，並且所有分析範例與程式碼【必須完全使用 R 語言】撰寫。
@@ -56,7 +68,6 @@ if uploaded_file and api_key:
         3. 報告總結：當使用者要求產出報告或分析告一段落時，整合前述分析結果，嚴格依照【回應格式規範】輸出完整的無母數估計報告。
 
         【無母數估計 SOP (R 語言範疇)】
-
         1. 等級相關估計 (Rank Correlation)：
            - 使用 R 的 `cor.test(X, Y, method = "spearman")` 計算 Spearman 等級相關係數 $\\hat{\\rho}_s$。遇到 Ties 說明採用 mid-ranks，若有 ties 請提示 `exact = FALSE`。
            - 使用 R 的 `cor.test(X, Y, method = "kendall")` 計算 Kendall 等級相關係數 $\\hat{\\tau}$。說明同序配對數 $N_c$ 與反序配對數 $N_d$ 的機率解釋，並使用 $\\tau_b$ 修正。
@@ -86,18 +97,31 @@ if uploaded_file and api_key:
             temperature=0.1
         )
 
-        st.session_state.chat_session = st.session_state.gemini_client.chats.create(
-            model="gemini-3.6-flash",
-            config=config
-        )
-        st.session_state.messages = []
+        # 🌟 備用模型清單：若 3.6-flash 徹底繁忙，自動退回其他可用模型
+        candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+        chat_created = False
 
-        # 預覽 5 筆，避開大檔案過大問題
+        for model_name in candidate_models:
+            try:
+                st.session_state.chat_session = st.session_state.gemini_client.chats.create(
+                    model=model_name,
+                    config=config
+                )
+                chat_created = True
+                break
+            except Exception:
+                continue
+
+        if not chat_created:
+            st.error("所有 Gemini 模型目前皆繁忙，請稍後再試。")
+            st.stop()
+
+        st.session_state.messages = []
         initial_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。請依據互動階段要求的第一步，簡單報告資料狀況，並主動詢問我想進行哪種無母數估計分析（等級相關、KDE 或無母數迴歸）。"
 
         with st.spinner("Agent 正在讀取資料..."):
             try:
-                response = st.session_state.chat_session.send_message(initial_prompt)
+                response = send_message_with_retry(st.session_state.chat_session, initial_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
                 st.error(f"連線失敗，詳細錯誤：{e}")
@@ -118,7 +142,7 @@ if uploaded_file and api_key:
         with st.chat_message("assistant"):
             with st.spinner("Agent 思考與分析中..."):
                 try:
-                    response = st.session_state.chat_session.send_message(user_input)
+                    response = send_message_with_retry(st.session_state.chat_session, user_input)
                     st.markdown(response.text)
                     st.session_state.messages.append({"role": "assistant", "content": response.text})
                 except Exception as e:
