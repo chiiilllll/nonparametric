@@ -8,163 +8,187 @@ Original file is located at
 """
 
 import time
-import streamlit as st
 import pandas as pd
+import streamlit as st
 from google import genai
 from google.genai import types
-from google.genai.errors import ServerError, APIError
+from google.genai.errors import APIError, ServerError
 
 st.title("📊 互動式無母數估計 AI Agent (R 語言版)")
-st.markdown("針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸** 提供 R 語言程式碼與專業估計分析。")
+st.markdown(
+    "針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸**"
+    " 提供 R 語言程式碼與專業估計分析。"
+)
 
-# 頂層全域初始化，確保 messages 恆存在，避免 KeyError
+# 1. 頂層全域 Session State 初始化，避免 KeyError
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+  st.session_state.messages = []
 
 # 取得 API Key
 try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-except:
-    api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
+  api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+  api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
 
 # 重置對話按鈕
 if st.sidebar.button("🗑️ 清空對話重新開始"):
-    st.session_state.clear()
-    st.rerun()
+  st.session_state.clear()
+  st.rerun()
 
-# 🌟 優先選擇現行支援的模型版本
+# 可用模型備援清單
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
-def send_message_with_retry(chat_session, prompt, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            return chat_session.send_message(prompt)
-        except (ServerError, APIError) as e:
-            if ("503" in str(e) or "UNAVAILABLE" in str(e)) and attempt < max_retries - 1:
-                time.sleep(2)
-                continue
-            raise e
+
+# 🌟 智能發送函式：自動處理 503 (退避重試) 與 429/404 (自動切換模型)
+def send_msg_smart(prompt, config):
+  last_err = None
+  for model_name in MODEL_CANDIDATES:
+    for delay in [1, 3, 6]:
+      try:
+        # 若 Session 不存在或切換模型，自動重新建立 Chat
+        if (
+            "chat_session" not in st.session_state
+            or st.session_state.get("active_model") != model_name
+        ):
+          chat = st.session_state.gemini_client.chats.create(
+              model=model_name, config=config
+          )
+          st.session_state.chat_session = chat
+          st.session_state.active_model = model_name
+
+        response = st.session_state.chat_session.send_message(prompt)
+        return response
+      except (ServerError, APIError) as e:
+        last_err = e
+        err_str = str(e)
+        # 503 塞車：暫停後原模型重試
+        if "503" in err_str or "UNAVAILABLE" in err_str:
+          time.sleep(delay)
+          continue
+        # 429 額度滿 / 404 找不到：清除壞掉的 session 並跳下一個模型
+        elif (
+            "429" in err_str
+            or "404" in err_str
+            or "RESOURCE_EXHAUSTED" in err_str
+            or "NOT_FOUND" in err_str
+        ):
+          if "chat_session" in st.session_state:
+            del st.session_state["chat_session"]
+          break
+        else:
+          raise e
+      except Exception as e:
+        last_err = e
+        break
+
+  raise Exception(f"所有 Gemini 模型皆暫時無法連線。最後錯誤原因：{last_err}")
+
 
 if api_key:
-    input_method = st.radio(
-        "請選擇資料提供方式：", 
-        ["上傳 CSV 檔案", "手動輸入/貼上數據", "直接開始對話（稍後再提供數據）"], 
-        horizontal=True
+  input_method = st.radio(
+      "請選擇資料提供方式：",
+      ["上傳 CSV 檔案", "直接開始對話（手動輸入數據）"],
+      horizontal=True,
+  )
+
+  initial_data_prompt = ""
+  has_input = False
+
+  if input_method == "上傳 CSV 檔案":
+    uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+    if uploaded_file:
+      df = pd.read_csv(uploaded_file)
+      preview_csv = df.head(5).to_csv(index=False)
+      total_rows = len(df)
+      initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
+      has_input = True
+  else:
+    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（等級相關、KDE、無母數迴歸），並提示使用者可以隨時在對話中貼上數據。"
+    has_input = True
+
+  if has_input:
+    # 2. 初始化 Gemini Client
+    if "gemini_client" not in st.session_state:
+      st.session_state.gemini_client = genai.Client(api_key=api_key)
+
+    # 3. 系統指令 (System Instruction) 與 Config 提前定義
+    sys_instruct = """
+        你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
+        你的任務是與使用者互動對答，引導他們完成無母數估計任務，並且所有分析範例與程式碼【必須完全使用 R 語言】撰寫。
+        使用者可以透過上傳 CSV、貼上文字/向量，或直接在對話中提供數據。
+
+        【互動階段要求】
+        1. 初步確認：收到資料或開場後，簡述已知資訊，並詢問使用者想進行哪種無母數估計任務：
+           - 等級相關估計 (Spearman $\\rho_s$, Kendall $\\tau$)
+           - 核密度估計 (KDE，分析單變量分配形狀 $f(x)$)
+           - 無母數迴歸 (Nadaraya-Watson / LOESS 估計 $m(x) = E(Y\vert{}X=x)$)
+           - 或是整合上述三者的完整分析。
+        2. 逐步執行與 R 程式碼產出：提供標準的 R 語言語法（使用 cor.test, density, loess, hist, mblm 等），並嚴格遵守【無母數估計 SOP】。
+        3. 報告總結：當使用者要求產出報告或分析告一段落時，整合前述分析結果，嚴格依照【回應格式規範】輸出完整的無母數估計報告。
+
+        【無母數估計 SOP (R 語言範疇)】
+        1. 等級相關估計 (Rank Correlation)：
+           - 使用 R 的 `cor.test(X, Y, method = "spearman")` 計算 Spearman 等級相關係數 $\\hat{\\rho}_s$。遇到 Ties 說明採用 mid-ranks，若有 ties 請提示 `exact = FALSE`。
+           - 使用 R 的 `cor.test(X, Y, method = "kendall")` 計算 Kendall 等級相關係數 $\\hat{\\tau}$。說明同序配對數 $N_c$ 與反序配對數 $N_d$ 的機率解釋，並使用 $\\tau_b$ 修正。
+           - 比較兩者差異（同一資料通常 $\vert{}\\hat{\\rho}_s\vert{} > \vert{}\\hat{\\tau}\vert{}$），並進行假設檢定 $H_0: \\rho_s = 0$ 或 $H_0: \\tau = 0$。
+
+        2. 核密度估計 (Kernel Density Estimation, KDE)：
+           - 使用 R 的 `density(x, bw = "nrd0", kernel = "gaussian")` 估計母體密度 $f(x)$。
+           - 討論頻寬 (Bandwidth $h$) 的選擇（如 Silverman's `nrd0`、`bw.SJ` 或 `bw.ucv`），說明 Bias-Variance Tradeoff（$h$ 過小導致 overfitting/局部波動；$h$ 過大導致 over-smoothing/抹平雙峰）。
+           - 提供 R 的繪圖程式碼（如 `hist(x, probability = TRUE)` 疊加 `lines(density(x))`）。
+
+        3. 無母數迴歸 (Nonparametric Regression)：
+           - 使用 R 的 `loess(Y ~ X, span = 0.75)` 或 Nadaraya-Watson 核迴歸估計條件期望 $m(x) = E(Y\vert{}X=x)$。
+           - 討論平滑參數 span 或頻寬 $h$ 對曲線特性的影響，並說明潛在的邊界偏差 (Boundary Bias)。
+           - 提供 R 的 `plot(X, Y)` 疊加 `lines(xs, predict(...))` 擬合曲線程式碼。
+
+        【回應格式規範】
+        產出報告請包含以下區塊：
+        - 資料概況與估計目標： 說明樣本數與變數特性。
+        - 方法選擇與 R 函數設定： 說明採用的 R 函數（如 `cor.test`, `density`, `loess`）與參數設定（如 `bw`, `span`）。
+        - R 語言實作程式碼： 提供可直接複製執行的完整 R 程式碼區塊 (R code block)。
+        - 估計數值與統計推論： 輸出 $\\hat{\\rho}_s$、$\\hat{\\tau}$、p-value 或 KDE/LOESS 特徵，公式請使用 LaTeX 呈現。
+        - 結論與實務意義： 解釋資料呈顯的局部模式或單調關係，並提及無母數方法的權衡（較少假設 vs 較慢收斂/需更多資料）。
+        """
+
+    config = types.GenerateContentConfig(
+        system_instruction=sys_instruct, temperature=0.1
     )
 
-    initial_data_prompt = ""
-    has_input = False
+    # 4. 初始化對話
+    if "chat_session" not in st.session_state:
+      prompt_to_send = f"{initial_data_prompt}\n\n請依據互動階段要求的第一步，簡單確認資料/狀況，並主動詢問我想進行哪種無母數估計分析。"
+      with st.spinner("Agent 啟動中（自動尋找最佳可用通道）..."):
+        try:
+          response = send_msg_smart(prompt_to_send, config)
+          st.session_state.messages = [
+              {"role": "assistant", "content": response.text}
+          ]
+        except Exception as e:
+          st.error(f"連線失敗：{e}")
+          st.stop()
 
-    if input_method == "上傳 CSV 檔案":
-        uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
-        if uploaded_file:
-            df = pd.read_csv(uploaded_file)
-            preview_csv = df.head(5).to_csv(index=False)
-            total_rows = len(df)
-            initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
-            has_input = True
+    # 5. 渲染對話記錄
+    for msg in st.session_state.get("messages", []):
+      with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    elif input_method == "手動輸入/貼上數據":
-        raw_text = st.text_area(
-            "請手動貼上 CSV 文字、R 向量或數據表格：", 
-            placeholder="例如 1：\nScore,Hours\n85,12\n60,20\n\n例如 2 (R 向量)：\nX <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
-            height=130
-        )
-        if raw_text.strip():
-            initial_data_prompt = f"這是使用者手動輸入的數據/文字：\n\n{raw_text.strip()}"
-            has_input = True
+    # 6. 處理使用者輸入
+    if user_input := st.chat_input(
+        "輸入你的需求 (例如：X <- c(85, 60, 92), Y <- c(12, 20, 5)，請計算 Spearman"
+        " 相關...)"
+    ):
+      with st.chat_message("user"):
+        st.markdown(user_input)
+      st.session_state.messages.append({"role": "user", "content": user_input})
 
-    else:
-        initial_data_prompt = "目前使用者未事先提供數據，請主動打招呼，說明你可以處理的無母數估計任務（等級相關、KDE、無母數迴歸），並提示使用者可以隨時在對話中貼上數據。"
-        has_input = True
-
-    if has_input:
-        if "gemini_client" not in st.session_state:
-            st.session_state.gemini_client = genai.Client(api_key=api_key)
-
-        if "chat_session" not in st.session_state:
-            sys_instruct = """
-            你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
-            你的任務是與使用者互動對答，引導他們完成無母數估計任務，並且所有分析範例與程式碼【必須完全使用 R 語言】撰寫。
-            使用者可以透過上傳 CSV、貼上文字/向量，或直接在對話中提供數據。
-
-            【互動階段要求】
-            1. 初步確認：收到資料或開場後，簡述已知資訊，並詢問使用者想進行哪種無母數估計任務：
-               - 等級相關估計 (Spearman $\\rho_s$, Kendall $\\tau$)
-               - 核密度估計 (KDE，分析單變量分配形狀 $f(x)$)
-               - 無母數迴歸 (Nadaraya-Watson / LOESS 估計 $m(x) = E(Y\vert{}X=x)$)
-               - 或是整合上述三者的完整分析。
-            2. 逐步執行與 R 程式碼產出：提供標準的 R 語言語法（使用 cor.test, density, loess, hist, mblm 等），並嚴格遵守【無母數估計 SOP】。
-            3. 報告總結：當使用者要求產出報告或分析告一段落時，整合前述分析結果，嚴格依照【回應格式規範】輸出完整的無母數估計報告。
-
-            【無母數估計 SOP (R 語言範疇)】
-            1. 等級相關估計 (Rank Correlation)：
-               - 使用 R 的 `cor.test(X, Y, method = "spearman")` 計算 Spearman 等級相關係數 $\\hat{\\rho}_s$。遇到 Ties 說明採用 mid-ranks，若有 ties 請提示 `exact = FALSE`。
-               - 使用 R 的 `cor.test(X, Y, method = "kendall")` 計算 Kendall 等級相關係數 $\\hat{\\tau}$。說明同序配對數 $N_c$ 與反序配對數 $N_d$ 的機率解釋，並使用 $\\tau_b$ 修正。
-               - 比較兩者差異（同一資料通常 $\vert{}\\hat{\\rho}_s\vert{} > \vert{}\\hat{\\tau}\vert{}$），並進行假設檢定 $H_0: \\rho_s = 0$ 或 $H_0: \\tau = 0$。
-
-            2. 核密度估計 (Kernel Density Estimation, KDE)：
-               - 使用 R 的 `density(x, bw = "nrd0", kernel = "gaussian")` 估計母體密度 $f(x)$。
-               - 討論頻寬 (Bandwidth $h$) 的選擇（如 Silverman's `nrd0`、`bw.SJ` 或 `bw.ucv`），說明 Bias-Variance Tradeoff（$h$ 過小導致 overfitting/局部波動；$h$ 過大導致 over-smoothing/抹平雙峰）。
-               - 提供 R 的繪圖程式碼（如 `hist(x, probability = TRUE)` 疊加 `lines(density(x))`）。
-
-            3. 無母數迴歸 (Nonparametric Regression)：
-               - 使用 R 的 `loess(Y ~ X, span = 0.75)` 或 Nadaraya-Watson 核迴歸估計條件期望 $m(x) = E(Y\vert{}X=x)$。
-               - 討論平滑參數 span 或頻寬 $h$ 對曲線特性的影響，並說明潛在的邊界偏差 (Boundary Bias)。
-               - 提供 R 的 `plot(X, Y)` 疊加 `lines(xs, predict(...))` 擬合曲線程式碼。
-
-            【回應格式規範】
-            產出報告請包含以下區塊：
-            - 資料概況與估計目標： 說明樣本數與變數特性。
-            - 方法選擇與 R 函數設定： 說明採用的 R 函數（如 `cor.test`, `density`, `loess`）與參數設定（如 `bw`, `span`）。
-            - R 語言實作程式碼： 提供可直接複製執行的完整 R 程式碼區塊 (R code block)。
-            - 估計數值與統計推論： 輸出 $\\hat{\\rho}_s$、$\\hat{\\tau}$、p-value 或 KDE/LOESS 特徵，公式請使用 LaTeX 呈現。
-            - 結論與實務意義： 解釋資料呈顯的局部模式或單調關係，並提及無母數方法的權衡（較少假設 vs 較慢收斂/需更多資料）。
-            """
-
-            config = types.GenerateContentConfig(
-                system_instruction=sys_instruct,
-                temperature=0.1
+      with st.chat_message("assistant"):
+        with st.spinner("Agent 思考與分析中..."):
+          try:
+            response = send_msg_smart(user_input, config)
+            st.markdown(response.text)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": response.text}
             )
-
-            last_error = None
-            for model_name in MODEL_CANDIDATES:
-                try:
-                    chat = st.session_state.gemini_client.chats.create(
-                        model=model_name,
-                        config=config
-                    )
-                    prompt_to_send = f"{initial_data_prompt}\n\n請依據互動階段要求的第一步，簡單確認資料/狀況，並主動詢問我想進行哪種無母數估計分析。"
-                    response = send_message_with_retry(chat, prompt_to_send)
-                    
-                    st.session_state.chat_session = chat
-                    st.session_state.messages = [{"role": "assistant", "content": response.text}]
-                    break
-                except Exception as e:
-                    last_error = e
-                    continue
-
-            if "chat_session" not in st.session_state:
-                st.error(f"無法建立對話，詳細錯誤訊息：{last_error}")
-                st.info("提示：若錯誤訊息包含 429 RESOURCE_EXHAUSTED，表示目前 API Key 的每日免費額度已用完，請在 Google AI Studio 申請一把新的 API Key 填入 Streamlit Secrets。")
-                st.stop()
-
-        # 3. 渲染歷史對話記錄
-        for msg in st.session_state.get("messages", []):
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-        # 4. 處理使用者對話輸入
-        if user_input := st.chat_input("輸入你的需求 (例如：X <- c(85, 60, 92), Y <- c(12, 20, 5)，請計算 Spearman 相關...)"):
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            st.session_state.messages.append({"role": "user", "content": user_input})
-
-            with st.chat_message("assistant"):
-                with st.spinner("Agent 思考與分析中..."):
-                    try:
-                        response = send_message_with_retry(st.session_state.chat_session, user_input)
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
-                    except Exception as e:
-                        st.error(f"發生錯誤：{e}")
+          except Exception as e:
+            st.error(f"發生錯誤：{e}")
