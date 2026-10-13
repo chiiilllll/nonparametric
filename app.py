@@ -21,18 +21,17 @@ st.set_page_config(
     page_title="Nadaraya-Watson 無母數估計 AI 顧問", layout="wide"
 )
 
-st.title("📊 互動式無母數估計 AI Agent (AI 自動推薦頻寬版)")
+st.title("📊 互動式無母數估計 AI Agent (多重頻寬評估與決策版)")
 st.markdown(
-    "上傳或貼上數據後，Agent 會**自動評估並推薦最佳 Kernel 與 Bandwidth"
-    " (h)**，針對 **等級相關**、**核密度估計 (KDE)** 與 **Nadaraya-Watson"
-    " 核迴歸** 提供 R 語言標準程式碼與即時視覺化。"
+    "上傳或貼上數據後，Agent 會**詳盡評估並比較多種 Kernel 與 Bandwidth (h)"
+    " 選擇法**，提供分析結果與視覺化對比，協助你做出最適選擇。"
 )
 
 # 1. 頂層全域 Session State 初始化，防止 KeyError
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
-# 2. 左側邊欄：API Key 與 說明
+# 2. 左側邊欄：API Key 與 系統說明
 st.sidebar.header("⚙️ API 與系統設定")
 try:
   api_key = st.secrets["GEMINI_API_KEY"]
@@ -45,9 +44,9 @@ if st.sidebar.button("🗑️ 清空對話與暫存"):
 
 st.sidebar.markdown("---")
 st.sidebar.info(
-    "💡 **AI 自動推薦機制**：\n"
-    "Agent 會自動根據你的資料結構（樣本數、分佈形態），評估並推薦最佳的"
-    " Kernel 與 Bandwidth (h) 設定，並說明選擇理由。"
+    "💡 **頻寬決策導引**：\n"
+    "Agent 會自動計算並比較多種 Bandwidth 選擇法（如 `nrd0`, `SJ`, `ucv`），"
+    "展示不同平滑度下的估計結果與圖表，供使用者自由選擇最合適的方案。"
 )
 
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
@@ -144,49 +143,63 @@ if api_key:
       initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
       has_input = True
   else:
-    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（包含主動推薦 Kernel 與 Bandwidth），並提示使用者可以隨時貼上數據。"
+    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（包含詳細的 Kernel 與 Bandwidth 多方案評估），並提示使用者可以隨時貼上數據。"
     has_input = True
 
   if has_input:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 🌟 改為普通字串 sys_instruct (非 f-string)，徹底消除 LaTeX { } 造成的 SyntaxError
+    # 🌟 徹底排除 LOESS，專注於 Kernel/Bandwidth 選擇比較與 Nadaraya-Watson 迴歸
     sys_instruct = """
         你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
-        你的核心任務是根據使用者提供的數據，【主動分析並推薦最佳的 Kernel 與 Bandwidth (h)】，產出精準、完全可重複 (Deterministic) 的 R 語言無母數估計報告。
-        無母數迴歸部分【嚴格限定使用 Nadaraya-Watson (NW) Kernel Regression】，禁止使用 LOESS。
+        你的核心任務是根據使用者提供的數據，【詳細說明並比較不同的 Kernel 與 Bandwidth (h) 選擇方法】，給出多個選項與對應結果，讓使用者自主決定最合適的方案。
+        無母數迴歸部分【嚴格限定使用 Nadaraya-Watson (NW) Kernel Regression】，絕對禁止使用 LOESS 或其他參數迴歸。
 
-        【AI 主動評估與推薦 SOP】：
-        1. 資料特徵診斷：
-           - 檢視資料樣本數 n、變數分佈特性（單峰、雙峰或多峰、有無極端值或離群值）。
+        【Kernel 與 Bandwidth (h) 選擇的詳細說明 SOP】：
 
-        2. Kernel 與 Bandwidth (h) 主動推薦與評估：
-           - 核函數 (Kernel) 選擇：建議標準常態核 (Gaussian Kernel) 或 Epanechnikov Kernel，並說明選擇理由。
-           - 頻寬 (Bandwidth h) 評估與比較：
-             * 計算或評估 Silverman's Rule of Thumb (`bw = "nrd0"`) 與 Sheather-Jones (`bw = "SJ"`) 之數值。
-             * 明確向使用者說明推薦特定頻寬的理論原因（如：若懷疑有多峰或非常態，說明為何推薦 `SJ` 勝過 `nrd0`）。
-             * 解釋偏差與變異權衡 (Bias-Variance Tradeoff)：h 過小導致 Overfitting (局部波動過大)；h 過大導致 Over-smoothing (抹平雙峰或真實趨勢)。
+        1. 核函數 (Kernel K) 的特性說明：
+           - Gaussian Kernel：平滑度高、無限支援集，實務上最常用。
+           - Epanechnikov Kernel：在 MISE (均方整合誤差) 意義下具備【統計漸進最佳性 (Asymptotic Efficiency)】。
+           - Uniform / Box Kernel：計算簡單但邊界不平滑。
+           - 提示使用者：Kernel 的形狀對估計結果影響通常較小，頻寬 h 才是決定性的關鍵。
 
-        3. 執行分析與 R 語言實作：
-           - 等級相關：使用 `cor.test(X, Y, method = "spearman")` 與 `cor.test(X, Y, method = "kendall")`。
-           - 核密度估計 (KDE)：使用推薦的 Kernel 與 Bandwidth 繪製 `density()` 曲線疊加直方圖 `hist(..., probability = TRUE)`。
-           - Nadaraya-Watson 核迴歸：使用推薦的頻寬執行 NW 迴歸（利用 R 內建之 `ksmooth()` 或自訂加權），並提醒使用者 Nadaraya-Watson 在端點處的「邊界偏差 (Boundary Bias)」現象。
+        2. 頻寬 (Bandwidth h) 選擇方法的詳細比較與推薦選項：
+           - 經驗法則 (Rule of Thumb, `bw = "nrd0"` / `bw = "nrd"`):
+             * 原理：假設母體為常態分配來最小化 AMISE。
+             * 優缺點：計算極快；但若資料有多峰 (Multimodal) 或重尾特性，容易過度平滑 (Over-smooth)。
+           - Sheather-Jones 法 (`bw = "SJ"`):
+             * 原理：資料驅動 (Data-driven) 的 Plug-in 方法。
+             * 優缺點：學術界與實務上高度推薦，能較好地捕捉多峰與偏態結構。
+           - 交叉驗證法 (Unbiased Cross-Validation, `bw = "ucv"` / Biased `bw = "bcv"`):
+             * 原理：完全不依賴母體分配假設，利用 Cross-Validation 估計 MISE。
+             * 優缺點：理論基礎強；但在小樣本或有重複值 (Ties) 時數值波動較大。
+           - 偏差與變異權衡 (Bias-Variance Tradeoff)：
+             * 小 h：低偏差、高變異（呈現局部細節，但可能有雜訊/過擬合）。
+             * 大 h：高偏差、低變異（曲線平滑，但可能掩蓋真實趨勢/過度平滑）。
+
+        3. 展現多元結果供使用者選擇：
+           - 當進行 KDE 或 Nadaraya-Watson 迴歸時，請在 R 程式碼中【同時呈現或比較至少兩種頻寬選擇（如 `nrd0` vs `SJ` 或不同 h 值）】的估計結果與繪圖曲線，明確列出各方案的估計數值與曲線特徵，由使用者依據分析目的進行最終選擇。
+
+        【無母數估計標準分析 SOP】：
+        - 等級相關：使用 `cor.test(X, Y, method = "spearman")` 與 `cor.test(X, Y, method = "kendall")`。
+        - 核密度估計 (KDE)：使用 `density(x, kernel = ..., bw = ...)`，配合直方圖比較不同頻寬。
+        - Nadaraya-Watson 核迴歸：使用 R 內建 `ksmooth(X, Y, kernel = "normal", bandwidth = h)` 或自訂 NW 加權函數。特別指出 NW 在資料端點處的「邊界偏差 (Boundary Bias)」問題。
 
         【繪圖與程式碼規範】：
-        1. 程式碼一致性：使用標準 R 函數，務必包含 `set.seed(42)`，確保每個人執行獲得完全相同的答案。
-        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（例如 main="Nadaraya-Watson Kernel Regression", xlab="X", ylab="Y"），嚴禁使用中文字元。
+        1. 程式碼一致性：使用標準 R 函數，務必包含 `set.seed(42)`，確保結果完全可重複。
+        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（例如 main="Nadaraya-Watson Regression (h comparison)", xlab="X", ylab="Y"），嚴禁使用中文字元。
         3. 程式碼區塊：R Code 必須完整放在 Markdown 語法 ```r ... ``` 區塊內。
         """
 
-    # 🌟 設定 temperature = 0.0，保證推論完全可重複
+    # 🌟 設定 temperature = 0.0，保證結果完全可重複
     config = types.GenerateContentConfig(
         system_instruction=sys_instruct, temperature=0.0
     )
 
     # 初始化對話
     if "chat_session" not in st.session_state:
-      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動說明你可以針對資料推薦最佳的 Kernel 與 Bandwidth (h)，並詢問我想進行什麼分析。"
+      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動說明你可以針對資料提供詳細的 Kernel 與 Bandwidth (h) 選項比較，並詢問我想進行什麼分析。"
       with st.spinner("Agent 啟動中..."):
         try:
           response = send_msg_smart(prompt_to_send, config)
@@ -207,14 +220,14 @@ if api_key:
     # 處理使用者輸入
     if user_input := st.chat_input(
         "輸入需求 (例如：X <- c(85, 60, 92, 75, 65), Y <- c(12, 20, 5, 18,"
-        " 15)，請推薦 Bandwidth 並做 NW 迴歸...)"
+        " 15)，請比較不同 Bandwidth 下的 NW 迴歸結果...)"
     ):
       with st.chat_message("user"):
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
       with st.chat_message("assistant"):
-        with st.spinner("Agent 評估資料、選擇頻寬並繪圖中..."):
+        with st.spinner("Agent 分析資料、比較頻寬選項並繪圖中..."):
           try:
             response = send_msg_smart(user_input, config)
             response_text = response.text
