@@ -7,6 +7,9 @@ Original file is located at
     https://colab.research.google.com/drive/109IsyIy3gd9mXzAIew55AQv_nugA71jr
 """
 
+import os
+import re
+import subprocess
 import time
 import pandas as pd
 import streamlit as st
@@ -14,13 +17,13 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
 
-st.title("📊 互動式無母數估計 AI Agent (R 語言版)")
+st.title("📊 互動式無母數估計 AI Agent (R 語言視覺化版)")
 st.markdown(
     "針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸**"
-    " 提供 R 語言程式碼與專業估計分析。"
+    " 提供 R 語言程式碼、專業估計分析與**即時圖表繪製**。"
 )
 
-# 1. 頂層全域 Session State 初始化，避免 KeyError
+# 1. 頂層全域 Session State 初始化
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
@@ -35,17 +38,42 @@ if st.sidebar.button("🗑️ 清空對話重新開始"):
   st.session_state.clear()
   st.rerun()
 
-# 可用模型備援清單
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
 
-# 🌟 智能發送函式：自動處理 503 (退避重試) 與 429/404 (自動切換模型)
+# 2. R 語言繪圖執行引擎
+def execute_r_code_and_get_image(r_code):
+  plot_filename = "output_plot.png"
+  if os.path.exists(plot_filename):
+    os.remove(plot_filename)
+
+  wrapped_r_script = f"""
+    png('{plot_filename}', width=700, height=500)
+    {r_code}
+    dev.off()
+    """
+
+  with open("temp_script.R", "w", encoding="utf-8") as f:
+    f.write(wrapped_r_script)
+
+  try:
+    result = subprocess.run(
+        ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
+    )
+    if os.path.exists(plot_filename):
+      return plot_filename, None
+    else:
+      return None, result.stderr
+  except Exception as e:
+    return None, str(e)
+
+
+# 3. 智能發送函式 (含 503 重試與跨模型切換)
 def send_msg_smart(prompt, config):
   last_err = None
   for model_name in MODEL_CANDIDATES:
     for delay in [1, 3, 6]:
       try:
-        # 若 Session 不存在或切換模型，自動重新建立 Chat
         if (
             "chat_session" not in st.session_state
             or st.session_state.get("active_model") != model_name
@@ -61,11 +89,9 @@ def send_msg_smart(prompt, config):
       except (ServerError, APIError) as e:
         last_err = e
         err_str = str(e)
-        # 503 塞車：暫停後原模型重試
         if "503" in err_str or "UNAVAILABLE" in err_str:
           time.sleep(delay)
           continue
-        # 429 額度滿 / 404 找不到：清除壞掉的 session 並跳下一個模型
         elif (
             "429" in err_str
             or "404" in err_str
@@ -81,7 +107,7 @@ def send_msg_smart(prompt, config):
         last_err = e
         break
 
-  raise Exception(f"所有 Gemini 模型皆暫時無法連線。最後錯誤原因：{last_err}")
+  raise Exception(f"連線失敗，最後錯誤原因：{last_err}")
 
 
 if api_key:
@@ -107,58 +133,32 @@ if api_key:
     has_input = True
 
   if has_input:
-    # 2. 初始化 Gemini Client
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 3. 系統指令 (System Instruction) 與 Config 提前定義
     sys_instruct = """
         你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
         你的任務是與使用者互動對答，引導他們完成無母數估計任務，並且所有分析範例與程式碼【必須完全使用 R 語言】撰寫。
-        使用者可以透過上傳 CSV、貼上文字/向量，或直接在對話中提供數據。
 
         【互動階段要求】
-        1. 初步確認：收到資料或開場後，簡述已知資訊，並詢問使用者想進行哪種無母數估計任務：
-           - 等級相關估計 (Spearman $\\rho_s$, Kendall $\\tau$)
-           - 核密度估計 (KDE，分析單變量分配形狀 $f(x)$)
-           - 無母數迴歸 (Nadaraya-Watson / LOESS 估計 $m(x) = E(Y\vert{}X=x)$)
-           - 或是整合上述三者的完整分析。
-        2. 逐步執行與 R 程式碼產出：提供標準的 R 語言語法（使用 cor.test, density, loess, hist, mblm 等），並嚴格遵守【無母數估計 SOP】。
-        3. 報告總結：當使用者要求產出報告或分析告一段落時，整合前述分析結果，嚴格依照【回應格式規範】輸出完整的無母數估計報告。
+        1. 初步確認：詢問使用者目標（等級相關、KDE、無母數迴歸）。
+        2. 逐步執行與 R 程式碼產出：提供標準 R 語言語法（使用 cor.test, density, loess, hist, plot 等）。
+        3. 當涉及視覺化需求時，請務必提供完整的、可獨立執行的 R 繪圖程式碼區塊 (markdown ```r ... ```)，確保程式碼可以直接被系統執行並輸出圖表。
 
-        【無母數估計 SOP (R 語言範疇)】
-        1. 等級相關估計 (Rank Correlation)：
-           - 使用 R 的 `cor.test(X, Y, method = "spearman")` 計算 Spearman 等級相關係數 $\\hat{\\rho}_s$。遇到 Ties 說明採用 mid-ranks，若有 ties 請提示 `exact = FALSE`。
-           - 使用 R 的 `cor.test(X, Y, method = "kendall")` 計算 Kendall 等級相關係數 $\\hat{\\tau}$。說明同序配對數 $N_c$ 與反序配對數 $N_d$ 的機率解釋，並使用 $\\tau_b$ 修正。
-           - 比較兩者差異（同一資料通常 $\vert{}\\hat{\\rho}_s\vert{} > \vert{}\\hat{\\tau}\vert{}$），並進行假設檢定 $H_0: \\rho_s = 0$ 或 $H_0: \\tau = 0$。
-
-        2. 核密度估計 (Kernel Density Estimation, KDE)：
-           - 使用 R 的 `density(x, bw = "nrd0", kernel = "gaussian")` 估計母體密度 $f(x)$。
-           - 討論頻寬 (Bandwidth $h$) 的選擇（如 Silverman's `nrd0`、`bw.SJ` 或 `bw.ucv`），說明 Bias-Variance Tradeoff（$h$ 過小導致 overfitting/局部波動；$h$ 過大導致 over-smoothing/抹平雙峰）。
-           - 提供 R 的繪圖程式碼（如 `hist(x, probability = TRUE)` 疊加 `lines(density(x))`）。
-
-        3. 無母數迴歸 (Nonparametric Regression)：
-           - 使用 R 的 `loess(Y ~ X, span = 0.75)` 或 Nadaraya-Watson 核迴歸估計條件期望 $m(x) = E(Y\vert{}X=x)$。
-           - 討論平滑參數 span 或頻寬 $h$ 對曲線特性的影響，並說明潛在的邊界偏差 (Boundary Bias)。
-           - 提供 R 的 `plot(X, Y)` 疊加 `lines(xs, predict(...))` 擬合曲線程式碼。
-
-        【回應格式規範】
-        產出報告請包含以下區塊：
-        - 資料概況與估計目標： 說明樣本數與變數特性。
-        - 方法選擇與 R 函數設定： 說明採用的 R 函數（如 `cor.test`, `density`, `loess`）與參數設定（如 `bw`, `span`）。
-        - R 語言實作程式碼： 提供可直接複製執行的完整 R 程式碼區塊 (R code block)。
-        - 估計數值與統計推論： 輸出 $\\hat{\\rho}_s$、$\\hat{\\tau}$、p-value 或 KDE/LOESS 特徵，公式請使用 LaTeX 呈現。
-        - 結論與實務意義： 解釋資料呈顯的局部模式或單調關係，並提及無母數方法的權衡（較少假設 vs 較慢收斂/需更多資料）。
+        【無母數估計 SOP】
+        - 等級相關：`cor.test(X, Y, method = "spearman")` 或 `"kendall"`。
+        - KDE 密度估計：`density(x, bw = "nrd0")`，搭配 `hist(..., probability = TRUE)` 與 `lines()`。
+        - 無母數迴歸：`loess(Y ~ X, span = 0.75)`，搭配 `plot(X, Y)` 與 `lines()`。
         """
 
     config = types.GenerateContentConfig(
         system_instruction=sys_instruct, temperature=0.1
     )
 
-    # 4. 初始化對話
+    # 初始化對話
     if "chat_session" not in st.session_state:
-      prompt_to_send = f"{initial_data_prompt}\n\n請依據互動階段要求的第一步，簡單確認資料/狀況，並主動詢問我想進行哪種無母數估計分析。"
-      with st.spinner("Agent 啟動中（自動尋找最佳可用通道）..."):
+      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，並詢問我想進行哪種無母數估計分析。"
+      with st.spinner("Agent 啟動中..."):
         try:
           response = send_msg_smart(prompt_to_send, config)
           st.session_state.messages = [
@@ -168,27 +168,48 @@ if api_key:
           st.error(f"連線失敗：{e}")
           st.stop()
 
-    # 5. 渲染對話記錄
+    # 4. 渲染歷史對話與歷史圖表
     for msg in st.session_state.get("messages", []):
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        # 若歷史訊息包含圖片路徑，繪製出來
+        if "img_path" in msg:
+          st.image(msg["img_path"], caption="R 繪圖結果")
 
-    # 6. 處理使用者輸入
-    if user_input := st.chat_input(
-        "輸入你的需求 (例如：X <- c(85, 60, 92), Y <- c(12, 20, 5)，請計算 Spearman"
-        " 相關...)"
-    ):
+    # 5. 處理使用者輸入
+    if user_input := st.chat_input("輸入需求 (例如：X <- c(85, 60, 92), Y <- c(12, 20, 5)，請畫出 KDE 與 LOESS 曲線...)"):
       with st.chat_message("user"):
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
       with st.chat_message("assistant"):
-        with st.spinner("Agent 思考與分析中..."):
+        with st.spinner("Agent 分析與繪圖中..."):
           try:
             response = send_msg_smart(user_input, config)
-            st.markdown(response.text)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": response.text}
+            response_text = response.text
+            st.markdown(response_text)
+
+            msg_data = {"role": "assistant", "content": response_text}
+
+            # 🌟 自動抓取 R 程式碼區塊並執行繪圖
+            r_code_match = re.search(
+                r"```r\n(.*?)```", response_text, re.DOTALL
             )
+            if r_code_match:
+              r_code = r_code_match.group(1)
+              # 若 R 程式碼包含繪圖指令，執行並渲染
+              if any(
+                  kw in r_code
+                  for kw in ["plot(", "hist(", "lines(", "boxplot(", "density("]
+              ):
+                img_path, err = execute_r_code_and_get_image(r_code)
+                if img_path:
+                  st.image(img_path, caption="R 繪圖結果")
+                  msg_data["img_path"] = img_path
+                elif err:
+                  st.warning(f"R 繪圖執行提示：{err}")
+
+            st.session_state.messages.append(msg_data)
+
           except Exception as e:
             st.error(f"發生錯誤：{e}")
