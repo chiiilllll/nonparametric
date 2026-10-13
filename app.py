@@ -31,6 +31,7 @@ if "messages" not in st.session_state:
 
 # 🔑 第一步：最前面要求輸入個人 Gemini API Key
 st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
+st.info("提示：API Key 是連接 Google 伺服器的通行證，請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請，通常以 `AIza` 開頭。")
 user_api_key = st.text_input(
     "請輸入你的 Gemini API Key：", type="password", key="api_key_input"
 )
@@ -113,12 +114,12 @@ def send_msg_smart(prompt, config):
         last_err = e
         break
 
-  raise Exception(f"連線失敗，請檢查 API Key 或網路狀況。詳細：{last_err}")
+  raise Exception(f"連線失敗，請確認 API Key 是否輸入正確。詳細：{last_err}")
 
 
 # 4. 主流程區塊
 if not api_key:
-  st.warning("⚠️ 請在上方輸入你的 Gemini API Key 以開啟學習 Agent。")
+  st.warning("⚠️ 請在上方輸入有效的 Gemini API Key 以開啟學習 Agent。")
 else:
   st.markdown("---")
   st.subheader("📊 步驟 2：提供實作數據")
@@ -155,46 +156,41 @@ else:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 🌟 專用教學解答級 System Prompt：嚴格標準化 + 兩階段互動門檻
+    # 🌟 絕對嚴格防偷跑的 System Prompt
     sys_instruct = """
         你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
-        你的任務是引導學生完成無母數統計三大概念的學習（等級相關、KDE、Nadaraya-Watson 迴歸），重點深耕【Nadaraya-Watson (NW) 核迴歸】實作。
-        為了讓所有學生對同一份數據獲得一致且標準的學習結果，你必須輸出完全確定、一致 (Deterministic) 的說明與 R 程式碼，絕對禁止使用 LOESS。
+        你的任務是引導學生完成無母數統計學習，重點深耕【Nadaraya-Watson (NW) 核迴歸】實作，絕對禁止使用 LOESS。
 
-        【嚴格兩階段互動 SOP (Human-in-the-Loop Flow)】：
+        【嚴格的兩階段互動規則】：
+        你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
 
-        --- 階段 1：數據診斷、理論說明與推薦評估（必須在此暫停） ---
-        當學生剛提供數據時，你必須依照以下步驟回應，並【強制停下來等待學生選擇】：
-        1. 無母數三大概念簡述：簡要說明等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸的核心精神。
-        2. Kernel 與 Bandwidth (h) 原理解析：
-           - 核函數 K：說明 Gaussian (標準常態核) 與 Epanechnikov (漸進最佳性) 的差別。
-           - 頻寬 h：詳細說明 Bias-Variance Tradeoff (h 太小過擬合/雜訊多；h 太大過平滑/抹平趨勢)。說明 `nrd0` (Rule of thumb) 與 `SJ` (Sheather-Jones, 推薦多峰/非常態) 的理論優缺點。
-        3. 【AI 推薦選型與理由】：根據學生的數據樣本數 n 與分佈特性，明確說出你【推薦哪一個 Kernel】與【推薦哪一個 Bandwidth 方法 (如 SJ 或特定 h 數值)】，並提供具體理據。
-        4. 【提問並暫停】：文末必須明確寫出：「請回覆你決定採用的 Kernel (如 Gaussian) 與 Bandwidth (如 SJ 或指定 h 值)，我將為你執行接下來的 Nadaraya-Watson 迴歸分析與繪圖。」**（在此暫停，不許在此階段輸出迴歸 R 繪圖程式碼）**。
+        === 狀態一：當學生剛上傳或提供數據時 ===
+        你的任務【只有說明與推薦】，做完必須立刻停下！
+        1. 簡述三大概念：等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸。
+        2. 原理解析：說明 Gaussian Kernel 與 Epanechnikov Kernel 差別，以及頻寬 h 的 Bias-Variance Tradeoff (nrd0 vs SJ)。
+        3. 【AI 推薦】：根據學生的數據，明確推薦一個 Kernel 與 Bandwidth (h) 設定，並說明理由。
+        4. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
+        ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。如果你偷跑畫圖，系統會崩潰。
 
-        --- 階段 2：依據選擇執行 NW 迴歸與繪圖 ---
-        當學生回應選擇後（或指定了參數），你必須輸出標準化的 NW 迴歸分析解答：
-        1. 參數確認：確認學生選定的 Kernel 與 Bandwidth h。
-        2. NW 迴歸公式與推論：列出 Nadaraya-Watson 估計式 m_h(x) = sum(K_h(x-X_i)Y_i) / sum(K_h(x-X_i))，並指出在端點處的「邊界偏差 (Boundary Bias)」現象。
-        3. 標準化 R 繪圖程式碼：提供完整的 Markdown R Code (```r ... ```)，要求：
-           - 包含 `set.seed(42)`。
-           - 繪圖標籤 (main, xlab, ylab, legend) **必須全為 ASCII/英文**，嚴禁中文字元（防止 Linux 亂碼）。
-           - 正確繪製散佈點與 NW 迴歸擬合曲線。
-
-        【繪圖與程式碼規範】：
-        - R 程式碼區塊必須標示為 ```r ... ```，確保系統能自動擷取並執行繪圖。
+        === 狀態二：當學生明確回覆了他選擇的 Kernel 與 Bandwidth 後 ===
+        你的任務是【執行計算與畫圖】。
+        1. 確認學生的參數。
+        2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
+        3. 輸出完整的 R 繪圖程式碼 (```r ... ```)。
+        4. 程式碼必須包含 `set.seed(42)`，且所有繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文（防止亂碼）。
         """
 
-    # 🌟 設定 temperature = 0.0，保證全班同學輸出邏輯與程式碼 100% 一致
     config = types.GenerateContentConfig(
         system_instruction=sys_instruct, temperature=0.0
     )
 
     # 5. 初始化對話
     if "chat_session" not in st.session_state:
+      # 💡 給 AI 的第一句話強制帶上禁忌指令，確保它不會無視 System Prompt
       prompt_to_send = (
-          f"{initial_data_prompt}\n\n請執行『階段 1』：簡述三概念、說明"
-          " Kernel/Bandwidth 選法、給出你的明確推薦與理由，並停下來要求我選擇。"
+          f"{initial_data_prompt}\n\n"
+          "請執行『狀態一』：簡述概念、說明原理並給出你的推薦。\n"
+          "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】進行迴歸運算或繪圖，只要停下來問我的選擇即可。"
       )
       with st.spinner("Agent 分析數據並準備教學引導中..."):
         try:
@@ -225,10 +221,17 @@ else:
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
+      # 💡 在學生回答後，解除限制，允許 AI 進入狀態二
+      trigger_stage_2_prompt = (
+          f"{user_input}\n\n"
+          "[系統提示：學生已做出選擇，現在正式進入『狀態二』。請輸出 NW"
+          " 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)。]"
+      )
+
       with st.chat_message("assistant"):
         with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
           try:
-            response = send_msg_smart(user_input, config)
+            response = send_msg_smart(trigger_stage_2_prompt, config)
             response_text = response.text
             st.markdown(response_text)
 
