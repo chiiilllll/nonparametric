@@ -17,12 +17,14 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
 
-st.set_page_config(page_title="無母數估計 AI Agent", layout="wide")
+st.set_page_config(
+    page_title="Nadaraya-Watson 無母數估計 AI Agent", layout="wide"
+)
 
-st.title("📊 互動式無母數估計 AI Agent (含頻寬決策引導版)")
+st.title("📊 互動式無母數估計 AI Agent (Nadaraya-Watson 專屬版)")
 st.markdown(
-    "針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸**"
-    " 提供可重複的 R 語言標準程式碼、即時視覺化與**專業頻寬選擇建議**。"
+    "針對 **等級相關**、**核密度估計 (KDE)** 與 **Nadaraya-Watson 核迴歸"
+    " (NW Kernel Regression)** 提供 R 語言標準程式碼、即時視覺化與頻寬選擇建議。"
 )
 
 # 1. 頂層全域 Session State 初始化
@@ -41,23 +43,24 @@ if st.sidebar.button("🗑️ 清空對話與暫存"):
   st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎛️ 2. 無母數估計超參數手動設定")
+st.sidebar.header("🎛️ 2. 核函數與頻寬參數設定")
 
 selected_kernel = st.sidebar.selectbox(
-    "KDE 核函數 (Kernel)",
+    "核函數 (Kernel K)",
     [
-        "gaussian",
+        "gaussian (normal)",
+        "box (uniform)",
         "epanechnikov",
-        "rectangular",
         "triangular",
         "biweight",
-        "cosine",
     ],
     index=0,
 )
 
-bw_method_type = st.sidebar.radio("頻寬 (Bandwidth h) 模式", ["自動選擇器", "手動指定數值"])
-if bw_method_type == "自動選擇器":
+bw_method_type = st.sidebar.radio(
+    "頻寬 (Bandwidth h) 設定模式", ["自動選擇器 (以 KDE 為主)", "手動指定數值 h"]
+)
+if bw_method_type == "自動選擇器 (以 KDE 為主)":
   selected_bw = st.sidebar.selectbox(
       "頻寬演算法", ["nrd0", "SJ", "ucv", "bcv"], index=0
   )
@@ -71,10 +74,6 @@ else:
           step=0.05,
       )
   )
-
-selected_span = st.sidebar.slider(
-    "LOESS 平滑參數 (Span)", min_value=0.1, max_value=1.0, value=0.75, step=0.05
-)
 
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
@@ -170,43 +169,39 @@ if api_key:
       initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
       has_input = True
   else:
-    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務，並提示使用者可以隨時貼上數據。"
+    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（重點在 Nadaraya-Watson 迴歸），並提示使用者可以隨時貼上數據。"
     has_input = True
 
   if has_input:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 🌟 升級版 System Prompt：加入頻寬 (Bandwidth) 選擇與建議邏輯
+    # 🌟 Nadaraya-Watson 專屬 System Prompt
     sys_instruct = f"""
         你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
-        你的任務是根據使用者指定的參數與數據，產出精準、完全可重複 (Deterministic) 的 R 語言無母數估計報告，並主動協助使用者選擇最佳頻寬 (Bandwidth h)。
+        你的任務是根據使用者指定的參數與數據，產出精準、完全可重複 (Deterministic) 的 R 語言無母數估計報告，無母數迴歸部分【嚴格限定使用 Nadaraya-Watson (NW) Kernel Regression】，禁止使用 LOESS。
 
         【當前 UI 側邊欄設定的超參數】：
-        - KDE Kernel: "{selected_kernel}"
-        - KDE Bandwidth (h): "{selected_bw}"
-        - LOESS Span: {selected_span}
-
-        【頻寬 (Bandwidth h) 選擇引導與建議原則】：
-        當使用者詢問「如何選擇頻寬」、「該用哪個頻寬」或要求進行 KDE 分析時，請依據以下理論架構引導使用者：
-        1. 偏差與變異權衡 (Bias-Variance Tradeoff)：
-           - $h$ 太小：過度擬合 (Overfitting)，曲線出現過多局部雜訊與波動（偏差小、變異大）。
-           - $h$ 太大：過度平滑 (Over-smoothing)，可能抹平潛在的雙峰 (Multimodality) 或數據特徵（偏差大、變異小）。
-        2. 頻寬選擇器建議規範：
-           - `bw = "nrd0"` (Silverman's Rule of Thumb)：R 預設值，計算快速且穩定，適合接近單峰或常態分佈的資料。
-           - `bw = "SJ"` (Sheather-Jones)：實務與學術界強烈推薦！資料驅動 (Data-driven)，特別適合懷疑資料具有雙峰、多峰或偏態結構時。
-           - `bw = "ucv"` (Unbiased Cross-Validation)：非參數交叉驗證，不依賴常態參考分配，但在極小樣本下變異較大。
-        3. 建議互動方式：主動比較預設 `nrd0` 與 `SJ` 或不同 $h$ 值的視覺化差異，幫助使用者觀察分佈特性的變化。
-
-        【繪圖與程式碼規範】：
-        1. 程式碼一致性：使用標準 R 函數，包含 `set.seed(42)`，確保結果可重複。
-        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（如 main="Kernel Density Estimation", xlab="Value", ylab="Density"），嚴禁使用中文字元。
-        3. 繪圖指令：執行 KDE 必須帶入使用者設定之 kernel='{selected_kernel}' 與 bw='{selected_bw}'；LOESS 帶入 span={selected_span}。 R Code 必須置於 ```r ... ``` 區塊。
+        - Kernel: "{selected_kernel}"
+        - Bandwidth (h): "{selected_bw}"
 
         【無母數估計標準 SOP】：
-        - 等級相關：`cor.test(X, Y, method = "spearman")` 或 `"kendall"`。
-        - KDE 密度估計：`density(x, kernel = "{selected_kernel}", bw = "{selected_bw}")`。
-        - 無母數迴歸：`loess(Y ~ X, span = {selected_span})`。
+        1. 等級相關估計 (Rank Correlation)：
+           - `cor.test(X, Y, method = "spearman")` 與 `cor.test(X, Y, method = "kendall")`。
+
+        2. 核密度估計 (Kernel Density Estimation, KDE)：
+           - 使用 `density(x, bw = "{selected_bw}")` 估計 $f(x)$，討論頻寬 $h$ 的 Bias-Variance Tradeoff。
+
+        3. Nadaraya-Watson 核迴歸 (Nadaraya-Watson Kernel Regression)：
+           - 估計目標：條件期望函數 $m(x) = E(Y\vert{}X=x) = \\frac{{\\sum K_h(x-X_i)Y_i}}{{\\sum K_h(x-X_i)}}$。
+           - R 實作方式：優先使用 R 內建之 `ksmooth(X, Y, kernel = "normal", bandwidth = h)` 或自訂 NW 核加權函數。
+           - 頻寬 $h$ 討論：說明 $h$ 太小導致 Overfitting (局部波動過大)；$h$ 太大導致 Over-smoothing (抹平趨勢)。
+           - 邊界偏差 (Boundary Bias)：必須提醒 Nadaraya-Watson 迴歸在資料端點 (邊界處) 容易產生 Bias 的特性。
+
+        【繪圖與程式碼規範】：
+        1. 程式碼一致性：使用標準 R 函數，包含 `set.seed(42)`，確保每個人執行獲得完全相同的答案。
+        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（例如 main="Nadaraya-Watson Kernel Regression", xlab="X", ylab="Y"），嚴禁使用中文字元。
+        3. 程式碼區塊：R Code 必須完整放在 Markdown 語法 ```r ... ``` 區塊內。
         """
 
     config = types.GenerateContentConfig(
@@ -215,7 +210,7 @@ if api_key:
 
     # 初始化對話
     if "chat_session" not in st.session_state:
-      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動詢問我想分析什麼，並說明你可以協助提供頻寬 (Bandwidth h) 的選擇建議。"
+      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動詢問我想分析什麼，並說明無母數迴歸將採用 Nadaraya-Watson 方法 (Kernel: {selected_kernel}, Bandwidth: {selected_bw})。"
       with st.spinner("Agent 啟動中..."):
         try:
           response = send_msg_smart(prompt_to_send, config)
@@ -231,11 +226,12 @@ if api_key:
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "img_path" in msg:
-          st.image(msg["img_path"], caption="R 語言繪圖結果")
+          st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
     # 處理使用者輸入
     if user_input := st.chat_input(
-        "輸入需求 (例如：請推薦我這份資料該選什麼 Bandwidth？或是貼上 X <- c(...))"
+        "輸入需求 (例如：X <- c(1, 2, 3, 4, 5), Y <- c(2, 3, 5, 8, 12)，請用"
+        " Nadaraya-Watson 畫出迴歸曲線...)"
     ):
       with st.chat_message("user"):
         st.markdown(user_input)
@@ -244,12 +240,13 @@ if api_key:
       # 注入當前側邊欄參數設定
       param_injected_input = (
           f"{user_input}\n\n"
-          f"[系統提示：請務必結合當前 UI 參數設定解說與繪圖 -> Kernel: '{selected_kernel}',"
-          f" Bandwidth: '{selected_bw}', LOESS Span: {selected_span}]"
+          f"[系統提示：無母數迴歸請嚴格使用 Nadaraya-Watson (NW) Kernel"
+          f" Regression！當前 UI 參數 -> Kernel: '{selected_kernel}',"
+          f" Bandwidth: '{selected_bw}']"
       )
 
       with st.chat_message("assistant"):
-        with st.spinner("Agent 分析、評估頻寬與繪圖中..."):
+        with st.spinner("Agent 執行 Nadaraya-Watson 迴歸分析與繪圖中..."):
           try:
             response = send_msg_smart(param_injected_input, config)
             response_text = response.text
@@ -265,11 +262,20 @@ if api_key:
               r_code = r_code_match.group(1)
               if any(
                   kw in r_code
-                  for kw in ["plot(", "hist(", "lines(", "boxplot(", "density("]
+                  for kw in [
+                      "plot(",
+                      "hist(",
+                      "lines(",
+                      "boxplot(",
+                      "density(",
+                      "ksmooth(",
+                  ]
               ):
                 img_path, err = execute_r_code_and_get_image(r_code)
                 if img_path:
-                  st.image(img_path, caption="R 語言繪圖結果")
+                  st.image(
+                      img_path, caption="R 語言 Nadaraya-Watson 繪圖結果"
+                  )
                   msg_data["img_path"] = img_path
                 elif err:
                   st.warning(f"R 繪圖訊息：{err}")
