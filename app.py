@@ -17,38 +17,78 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
 
-st.title("📊 互動式無母數估計 AI Agent (R 語言視覺化版)")
+st.set_page_config(page_title="無母數估計 AI Agent", layout="wide")
+
+st.title("📊 互動式無母數估計 AI Agent (含頻寬決策引導版)")
 st.markdown(
     "針對 **等級相關**、**核密度估計 (KDE)** 與 **無母數迴歸**"
-    " 提供 R 語言程式碼、專業估計分析與**即時圖表繪製**。"
+    " 提供可重複的 R 語言標準程式碼、即時視覺化與**專業頻寬選擇建議**。"
 )
 
 # 1. 頂層全域 Session State 初始化
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
-# 取得 API Key
+# 2. 左側邊欄：API Key 與 統計估計超參數設定
+st.sidebar.header("⚙️ 1. API 與系統設定")
 try:
   api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
   api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
 
-# 重置對話按鈕
-if st.sidebar.button("🗑️ 清空對話重新開始"):
+if st.sidebar.button("🗑️ 清空對話與暫存"):
   st.session_state.clear()
   st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.header("🎛️ 2. 無母數估計超參數手動設定")
+
+selected_kernel = st.sidebar.selectbox(
+    "KDE 核函數 (Kernel)",
+    [
+        "gaussian",
+        "epanechnikov",
+        "rectangular",
+        "triangular",
+        "biweight",
+        "cosine",
+    ],
+    index=0,
+)
+
+bw_method_type = st.sidebar.radio("頻寬 (Bandwidth h) 模式", ["自動選擇器", "手動指定數值"])
+if bw_method_type == "自動選擇器":
+  selected_bw = st.sidebar.selectbox(
+      "頻寬演算法", ["nrd0", "SJ", "ucv", "bcv"], index=0
+  )
+else:
+  selected_bw = str(
+      st.sidebar.number_input(
+          "手動指定頻寬數值 h",
+          value=0.5,
+          min_value=0.01,
+          max_value=10.0,
+          step=0.05,
+      )
+  )
+
+selected_span = st.sidebar.slider(
+    "LOESS 平滑參數 (Span)", min_value=0.1, max_value=1.0, value=0.75, step=0.05
+)
 
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
 
-# 2. R 語言繪圖執行引擎
+# 3. R 語言繪圖執行引擎 (英文字型防亂碼)
 def execute_r_code_and_get_image(r_code):
   plot_filename = "output_plot.png"
   if os.path.exists(plot_filename):
     os.remove(plot_filename)
 
   wrapped_r_script = f"""
-    png('{plot_filename}', width=700, height=500)
+    options(warn=-1)
+    png('{plot_filename}', width=800, height=550, res=110)
+    set.seed(42) # 固定隨機種子確保完全可重複
     {r_code}
     dev.off()
     """
@@ -68,7 +108,7 @@ def execute_r_code_and_get_image(r_code):
     return None, str(e)
 
 
-# 3. 智能發送函式 (含 503 重試與跨模型切換)
+# 4. 智能連線發送函式
 def send_msg_smart(prompt, config):
   last_err = None
   for model_name in MODEL_CANDIDATES:
@@ -110,6 +150,7 @@ def send_msg_smart(prompt, config):
   raise Exception(f"連線失敗，最後錯誤原因：{last_err}")
 
 
+# 5. 主介面區塊
 if api_key:
   input_method = st.radio(
       "請選擇資料提供方式：",
@@ -129,35 +170,52 @@ if api_key:
       initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
       has_input = True
   else:
-    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（等級相關、KDE、無母數迴歸），並提示使用者可以隨時在對話中貼上數據。"
+    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務，並提示使用者可以隨時貼上數據。"
     has_input = True
 
   if has_input:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    sys_instruct = """
+    # 🌟 升級版 System Prompt：加入頻寬 (Bandwidth) 選擇與建議邏輯
+    sys_instruct = f"""
         你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
-        你的任務是與使用者互動對答，引導他們完成無母數估計任務，並且所有分析範例與程式碼【必須完全使用 R 語言】撰寫。
+        你的任務是根據使用者指定的參數與數據，產出精準、完全可重複 (Deterministic) 的 R 語言無母數估計報告，並主動協助使用者選擇最佳頻寬 (Bandwidth h)。
 
-        【互動階段要求】
-        1. 初步確認：詢問使用者目標（等級相關、KDE、無母數迴歸）。
-        2. 逐步執行與 R 程式碼產出：提供標準 R 語言語法（使用 cor.test, density, loess, hist, plot 等）。
-        3. 當涉及視覺化需求時，請務必提供完整的、可獨立執行的 R 繪圖程式碼區塊 (markdown ```r ... ```)，確保程式碼可以直接被系統執行並輸出圖表。
+        【當前 UI 側邊欄設定的超參數】：
+        - KDE Kernel: "{selected_kernel}"
+        - KDE Bandwidth (h): "{selected_bw}"
+        - LOESS Span: {selected_span}
 
-        【無母數估計 SOP】
+        【頻寬 (Bandwidth h) 選擇引導與建議原則】：
+        當使用者詢問「如何選擇頻寬」、「該用哪個頻寬」或要求進行 KDE 分析時，請依據以下理論架構引導使用者：
+        1. 偏差與變異權衡 (Bias-Variance Tradeoff)：
+           - $h$ 太小：過度擬合 (Overfitting)，曲線出現過多局部雜訊與波動（偏差小、變異大）。
+           - $h$ 太大：過度平滑 (Over-smoothing)，可能抹平潛在的雙峰 (Multimodality) 或數據特徵（偏差大、變異小）。
+        2. 頻寬選擇器建議規範：
+           - `bw = "nrd0"` (Silverman's Rule of Thumb)：R 預設值，計算快速且穩定，適合接近單峰或常態分佈的資料。
+           - `bw = "SJ"` (Sheather-Jones)：實務與學術界強烈推薦！資料驅動 (Data-driven)，特別適合懷疑資料具有雙峰、多峰或偏態結構時。
+           - `bw = "ucv"` (Unbiased Cross-Validation)：非參數交叉驗證，不依賴常態參考分配，但在極小樣本下變異較大。
+        3. 建議互動方式：主動比較預設 `nrd0` 與 `SJ` 或不同 $h$ 值的視覺化差異，幫助使用者觀察分佈特性的變化。
+
+        【繪圖與程式碼規範】：
+        1. 程式碼一致性：使用標準 R 函數，包含 `set.seed(42)`，確保結果可重複。
+        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（如 main="Kernel Density Estimation", xlab="Value", ylab="Density"），嚴禁使用中文字元。
+        3. 繪圖指令：執行 KDE 必須帶入使用者設定之 kernel='{selected_kernel}' 與 bw='{selected_bw}'；LOESS 帶入 span={selected_span}。 R Code 必須置於 ```r ... ``` 區塊。
+
+        【無母數估計標準 SOP】：
         - 等級相關：`cor.test(X, Y, method = "spearman")` 或 `"kendall"`。
-        - KDE 密度估計：`density(x, bw = "nrd0")`，搭配 `hist(..., probability = TRUE)` 與 `lines()`。
-        - 無母數迴歸：`loess(Y ~ X, span = 0.75)`，搭配 `plot(X, Y)` 與 `lines()`。
+        - KDE 密度估計：`density(x, kernel = "{selected_kernel}", bw = "{selected_bw}")`。
+        - 無母數迴歸：`loess(Y ~ X, span = {selected_span})`。
         """
 
     config = types.GenerateContentConfig(
-        system_instruction=sys_instruct, temperature=0.1
+        system_instruction=sys_instruct, temperature=0.0
     )
 
     # 初始化對話
     if "chat_session" not in st.session_state:
-      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，並詢問我想進行哪種無母數估計分析。"
+      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動詢問我想分析什麼，並說明你可以協助提供頻寬 (Bandwidth h) 的選擇建議。"
       with st.spinner("Agent 啟動中..."):
         try:
           response = send_msg_smart(prompt_to_send, config)
@@ -168,46 +226,53 @@ if api_key:
           st.error(f"連線失敗：{e}")
           st.stop()
 
-    # 4. 渲染歷史對話與歷史圖表
+    # 渲染歷史對話與圖表
     for msg in st.session_state.get("messages", []):
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        # 若歷史訊息包含圖片路徑，繪製出來
         if "img_path" in msg:
-          st.image(msg["img_path"], caption="R 繪圖結果")
+          st.image(msg["img_path"], caption="R 語言繪圖結果")
 
-    # 5. 處理使用者輸入
-    if user_input := st.chat_input("輸入需求 (例如：X <- c(85, 60, 92), Y <- c(12, 20, 5)，請畫出 KDE 與 LOESS 曲線...)"):
+    # 處理使用者輸入
+    if user_input := st.chat_input(
+        "輸入需求 (例如：請推薦我這份資料該選什麼 Bandwidth？或是貼上 X <- c(...))"
+    ):
       with st.chat_message("user"):
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
+      # 注入當前側邊欄參數設定
+      param_injected_input = (
+          f"{user_input}\n\n"
+          f"[系統提示：請務必結合當前 UI 參數設定解說與繪圖 -> Kernel: '{selected_kernel}',"
+          f" Bandwidth: '{selected_bw}', LOESS Span: {selected_span}]"
+      )
+
       with st.chat_message("assistant"):
-        with st.spinner("Agent 分析與繪圖中..."):
+        with st.spinner("Agent 分析、評估頻寬與繪圖中..."):
           try:
-            response = send_msg_smart(user_input, config)
+            response = send_msg_smart(param_injected_input, config)
             response_text = response.text
             st.markdown(response_text)
 
             msg_data = {"role": "assistant", "content": response_text}
 
-            # 🌟 自動抓取 R 程式碼區塊並執行繪圖
+            # 抓取 R Code 並執行繪圖
             r_code_match = re.search(
                 r"```r\n(.*?)```", response_text, re.DOTALL
             )
             if r_code_match:
               r_code = r_code_match.group(1)
-              # 若 R 程式碼包含繪圖指令，執行並渲染
               if any(
                   kw in r_code
                   for kw in ["plot(", "hist(", "lines(", "boxplot(", "density("]
               ):
                 img_path, err = execute_r_code_and_get_image(r_code)
                 if img_path:
-                  st.image(img_path, caption="R 繪圖結果")
+                  st.image(img_path, caption="R 語言繪圖結果")
                   msg_data["img_path"] = img_path
                 elif err:
-                  st.warning(f"R 繪圖執行提示：{err}")
+                  st.warning(f"R 繪圖訊息：{err}")
 
             st.session_state.messages.append(msg_data)
 
