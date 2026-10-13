@@ -17,42 +17,35 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
 
-st.set_page_config(
-    page_title="Nadaraya-Watson 無母數估計 AI 顧問", layout="wide"
-)
+st.set_page_config(page_title="無母數統計教學與實作 Agent", layout="wide")
 
-st.title("📊 互動式無母數估計 AI Agent (多重頻寬評估與決策版)")
+st.title("🎓 無母數估計教學與實作 AI Agent")
 st.markdown(
-    "上傳或貼上數據後，Agent 會**詳盡評估並比較多種 Kernel 與 Bandwidth (h)"
-    " 選擇法**，提供分析結果與視覺化對比，協助你做出最適選擇。"
+    "本系統涵蓋 **等級相關**、**核密度估計 (KDE)** 與 **Nadaraya-Watson (NW)"
+    " 核迴歸**。請先輸入 API Key 與數據，Agent 將導引你完成標準化分析流程。"
 )
 
-# 1. 頂層全域 Session State 初始化，防止 KeyError
+# 1. 頂層初始化 Session State，確保 messages 恆存在
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
-# 2. 左側邊欄：API Key 與 系統說明
-st.sidebar.header("⚙️ API 與系統設定")
-try:
-  api_key = st.secrets["GEMINI_API_KEY"]
-except Exception:
-  api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
+# 🔑 第一步：最前面要求輸入個人 Gemini API Key
+st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
+user_api_key = st.text_input(
+    "請輸入你的 Gemini API Key：", type="password", key="api_key_input"
+)
 
-if st.sidebar.button("🗑️ 清空對話與暫存"):
+# 若 Secrets 有設定可備用，否則優先使用頁面輸入
+api_key = user_api_key or st.secrets.get("GEMINI_API_KEY", "")
+
+if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
   st.session_state.clear()
   st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.info(
-    "💡 **頻寬決策導引**：\n"
-    "Agent 會自動計算並比較多種 Bandwidth 選擇法（如 `nrd0`, `SJ`, `ucv`），"
-    "展示不同平滑度下的估計結果與圖表，供使用者自由選擇最合適的方案。"
-)
 
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
 
-# 3. R 語言繪圖執行引擎 (英文字型防亂碼)
+# 2. R 語言繪圖執行引擎 (ASCII/英文標籤防亂碼)
 def execute_r_code_and_get_image(r_code):
   plot_filename = "output_plot.png"
   if os.path.exists(plot_filename):
@@ -61,7 +54,7 @@ def execute_r_code_and_get_image(r_code):
   wrapped_r_script = f"""
     options(warn=-1)
     png('{plot_filename}', width=800, height=550, res=110)
-    set.seed(42) # 固定隨機種子確保完全可重複
+    set.seed(42) # 固定隨機種子，確保所有人繪圖與結果 100% 一致
     {r_code}
     dev.off()
     """
@@ -81,7 +74,7 @@ def execute_r_code_and_get_image(r_code):
     return None, str(e)
 
 
-# 4. 智能連線發送函式 (含退避重試與模型自動降級)
+# 3. 智能連線發送函式 (含退避重試與模型降級)
 def send_msg_smart(prompt, config):
   last_err = None
   for model_name in MODEL_CANDIDATES:
@@ -120,14 +113,19 @@ def send_msg_smart(prompt, config):
         last_err = e
         break
 
-  raise Exception(f"連線失敗，最後錯誤原因：{last_err}")
+  raise Exception(f"連線失敗，請檢查 API Key 或網路狀況。詳細：{last_err}")
 
 
-# 5. 主介面區塊
-if api_key:
+# 4. 主流程區塊
+if not api_key:
+  st.warning("⚠️ 請在上方輸入你的 Gemini API Key 以開啟學習 Agent。")
+else:
+  st.markdown("---")
+  st.subheader("📊 步驟 2：提供實作數據")
+
   input_method = st.radio(
-      "請選擇資料提供方式：",
-      ["上傳 CSV 檔案", "直接開始對話（手動輸入數據）"],
+      "請選擇數據提供方式：",
+      ["上傳 CSV 檔案", "手動輸入/貼上數據 (R 向量或 CSV)"],
       horizontal=True,
   )
 
@@ -140,67 +138,65 @@ if api_key:
       df = pd.read_csv(uploaded_file)
       preview_csv = df.head(5).to_csv(index=False)
       total_rows = len(df)
-      initial_data_prompt = f"這是我上傳的資料預覽（前 5 筆）：\n\n{preview_csv}\n\n這份資料總共有 {total_rows} 筆。"
+      initial_data_prompt = f"這是我提供的數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。"
       has_input = True
   else:
-    initial_data_prompt = "目前使用者未事先提供數據，請主動簡短打招呼，說明你可以處理的無母數估計任務（包含詳細的 Kernel 與 Bandwidth 多方案評估），並提示使用者可以隨時貼上數據。"
-    has_input = True
+    raw_text = st.text_area(
+        "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18,"
+        " 15))：",
+        height=100,
+        placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
+    )
+    if raw_text.strip():
+      initial_data_prompt = f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}"
+      has_input = True
 
   if has_input:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 🌟 徹底排除 LOESS，專注於 Kernel/Bandwidth 選擇比較與 Nadaraya-Watson 迴歸
+    # 🌟 專用教學解答級 System Prompt：嚴格標準化 + 兩階段互動門檻
     sys_instruct = """
-        你是一位嚴謹且精通無母數統計學與 R 語言的資深數據顧問。
-        你的核心任務是根據使用者提供的數據，【詳細說明並比較不同的 Kernel 與 Bandwidth (h) 選擇方法】，給出多個選項與對應結果，讓使用者自主決定最合適的方案。
-        無母數迴歸部分【嚴格限定使用 Nadaraya-Watson (NW) Kernel Regression】，絕對禁止使用 LOESS 或其他參數迴歸。
+        你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
+        你的任務是引導學生完成無母數統計三大概念的學習（等級相關、KDE、Nadaraya-Watson 迴歸），重點深耕【Nadaraya-Watson (NW) 核迴歸】實作。
+        為了讓所有學生對同一份數據獲得一致且標準的學習結果，你必須輸出完全確定、一致 (Deterministic) 的說明與 R 程式碼，絕對禁止使用 LOESS。
 
-        【Kernel 與 Bandwidth (h) 選擇的詳細說明 SOP】：
+        【嚴格兩階段互動 SOP (Human-in-the-Loop Flow)】：
 
-        1. 核函數 (Kernel K) 的特性說明：
-           - Gaussian Kernel：平滑度高、無限支援集，實務上最常用。
-           - Epanechnikov Kernel：在 MISE (均方整合誤差) 意義下具備【統計漸進最佳性 (Asymptotic Efficiency)】。
-           - Uniform / Box Kernel：計算簡單但邊界不平滑。
-           - 提示使用者：Kernel 的形狀對估計結果影響通常較小，頻寬 h 才是決定性的關鍵。
+        --- 階段 1：數據診斷、理論說明與推薦評估（必須在此暫停） ---
+        當學生剛提供數據時，你必須依照以下步驟回應，並【強制停下來等待學生選擇】：
+        1. 無母數三大概念簡述：簡要說明等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸的核心精神。
+        2. Kernel 與 Bandwidth (h) 原理解析：
+           - 核函數 K：說明 Gaussian (標準常態核) 與 Epanechnikov (漸進最佳性) 的差別。
+           - 頻寬 h：詳細說明 Bias-Variance Tradeoff (h 太小過擬合/雜訊多；h 太大過平滑/抹平趨勢)。說明 `nrd0` (Rule of thumb) 與 `SJ` (Sheather-Jones, 推薦多峰/非常態) 的理論優缺點。
+        3. 【AI 推薦選型與理由】：根據學生的數據樣本數 n 與分佈特性，明確說出你【推薦哪一個 Kernel】與【推薦哪一個 Bandwidth 方法 (如 SJ 或特定 h 數值)】，並提供具體理據。
+        4. 【提問並暫停】：文末必須明確寫出：「請回覆你決定採用的 Kernel (如 Gaussian) 與 Bandwidth (如 SJ 或指定 h 值)，我將為你執行接下來的 Nadaraya-Watson 迴歸分析與繪圖。」**（在此暫停，不許在此階段輸出迴歸 R 繪圖程式碼）**。
 
-        2. 頻寬 (Bandwidth h) 選擇方法的詳細比較與推薦選項：
-           - 經驗法則 (Rule of Thumb, `bw = "nrd0"` / `bw = "nrd"`):
-             * 原理：假設母體為常態分配來最小化 AMISE。
-             * 優缺點：計算極快；但若資料有多峰 (Multimodal) 或重尾特性，容易過度平滑 (Over-smooth)。
-           - Sheather-Jones 法 (`bw = "SJ"`):
-             * 原理：資料驅動 (Data-driven) 的 Plug-in 方法。
-             * 優缺點：學術界與實務上高度推薦，能較好地捕捉多峰與偏態結構。
-           - 交叉驗證法 (Unbiased Cross-Validation, `bw = "ucv"` / Biased `bw = "bcv"`):
-             * 原理：完全不依賴母體分配假設，利用 Cross-Validation 估計 MISE。
-             * 優缺點：理論基礎強；但在小樣本或有重複值 (Ties) 時數值波動較大。
-           - 偏差與變異權衡 (Bias-Variance Tradeoff)：
-             * 小 h：低偏差、高變異（呈現局部細節，但可能有雜訊/過擬合）。
-             * 大 h：高偏差、低變異（曲線平滑，但可能掩蓋真實趨勢/過度平滑）。
-
-        3. 展現多元結果供使用者選擇：
-           - 當進行 KDE 或 Nadaraya-Watson 迴歸時，請在 R 程式碼中【同時呈現或比較至少兩種頻寬選擇（如 `nrd0` vs `SJ` 或不同 h 值）】的估計結果與繪圖曲線，明確列出各方案的估計數值與曲線特徵，由使用者依據分析目的進行最終選擇。
-
-        【無母數估計標準分析 SOP】：
-        - 等級相關：使用 `cor.test(X, Y, method = "spearman")` 與 `cor.test(X, Y, method = "kendall")`。
-        - 核密度估計 (KDE)：使用 `density(x, kernel = ..., bw = ...)`，配合直方圖比較不同頻寬。
-        - Nadaraya-Watson 核迴歸：使用 R 內建 `ksmooth(X, Y, kernel = "normal", bandwidth = h)` 或自訂 NW 加權函數。特別指出 NW 在資料端點處的「邊界偏差 (Boundary Bias)」問題。
+        --- 階段 2：依據選擇執行 NW 迴歸與繪圖 ---
+        當學生回應選擇後（或指定了參數），你必須輸出標準化的 NW 迴歸分析解答：
+        1. 參數確認：確認學生選定的 Kernel 與 Bandwidth h。
+        2. NW 迴歸公式與推論：列出 Nadaraya-Watson 估計式 m_h(x) = sum(K_h(x-X_i)Y_i) / sum(K_h(x-X_i))，並指出在端點處的「邊界偏差 (Boundary Bias)」現象。
+        3. 標準化 R 繪圖程式碼：提供完整的 Markdown R Code (```r ... ```)，要求：
+           - 包含 `set.seed(42)`。
+           - 繪圖標籤 (main, xlab, ylab, legend) **必須全為 ASCII/英文**，嚴禁中文字元（防止 Linux 亂碼）。
+           - 正確繪製散佈點與 NW 迴歸擬合曲線。
 
         【繪圖與程式碼規範】：
-        1. 程式碼一致性：使用標準 R 函數，務必包含 `set.seed(42)`，確保結果完全可重複。
-        2. 防範圖片亂碼：繪圖文字標籤（`main`, `xlab`, `ylab`, `legend`）**必須統一使用英文/ASCII 數字**（例如 main="Nadaraya-Watson Regression (h comparison)", xlab="X", ylab="Y"），嚴禁使用中文字元。
-        3. 程式碼區塊：R Code 必須完整放在 Markdown 語法 ```r ... ``` 區塊內。
+        - R 程式碼區塊必須標示為 ```r ... ```，確保系統能自動擷取並執行繪圖。
         """
 
-    # 🌟 設定 temperature = 0.0，保證結果完全可重複
+    # 🌟 設定 temperature = 0.0，保證全班同學輸出邏輯與程式碼 100% 一致
     config = types.GenerateContentConfig(
         system_instruction=sys_instruct, temperature=0.0
     )
 
-    # 初始化對話
+    # 5. 初始化對話
     if "chat_session" not in st.session_state:
-      prompt_to_send = f"{initial_data_prompt}\n\n請簡單確認狀況，主動說明你可以針對資料提供詳細的 Kernel 與 Bandwidth (h) 選項比較，並詢問我想進行什麼分析。"
-      with st.spinner("Agent 啟動中..."):
+      prompt_to_send = (
+          f"{initial_data_prompt}\n\n請執行『階段 1』：簡述三概念、說明"
+          " Kernel/Bandwidth 選法、給出你的明確推薦與理由，並停下來要求我選擇。"
+      )
+      with st.spinner("Agent 分析數據並準備教學引導中..."):
         try:
           response = send_msg_smart(prompt_to_send, config)
           st.session_state.messages = [
@@ -210,24 +206,27 @@ if api_key:
           st.error(f"連線失敗：{e}")
           st.stop()
 
-    # 渲染歷史對話與圖表
+    st.markdown("---")
+    st.subheader("💬 步驟 3：對話實作區")
+
+    # 6. 渲染歷史對話與歷史繪圖
     for msg in st.session_state.get("messages", []):
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "img_path" in msg:
           st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    # 處理使用者輸入
+    # 7. 處理同學對話輸入
     if user_input := st.chat_input(
-        "輸入需求 (例如：X <- c(85, 60, 92, 75, 65), Y <- c(12, 20, 5, 18,"
-        " 15)，請比較不同 Bandwidth 下的 NW 迴歸結果...)"
+        "回覆你的選擇 (例如：我選擇 Gaussian Kernel 與 SJ 頻寬，請進行 NW"
+        " 迴歸...)"
     ):
       with st.chat_message("user"):
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
       with st.chat_message("assistant"):
-        with st.spinner("Agent 分析資料、比較頻寬選項並繪圖中..."):
+        with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
           try:
             response = send_msg_smart(user_input, config)
             response_text = response.text
@@ -235,7 +234,7 @@ if api_key:
 
             msg_data = {"role": "assistant", "content": response_text}
 
-            # 抓取 R Code 並在背景執行繪圖
+            # 抓取 R Code 並在背景執行 Rscript 繪圖
             r_code_match = re.search(
                 r"```r\n(.*?)```", response_text, re.DOTALL
             )
