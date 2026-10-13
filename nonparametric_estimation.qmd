@@ -1,0 +1,427 @@
+---
+title: "無母數估計方法探討"
+author: "李祐君"
+format: 
+  revealjs:
+    theme: default
+    slide-number: c/t
+    transition: slide
+    html-math-method: mathjax
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{=html}
+<style>
+.reveal { font-size: 27px; }
+.reveal h1, .reveal h2, .reveal h3, .reveal h4 { font-size: 1.5em; }
+</style>
+```
+
+### 從檢定到估計
+
+-   **回顧**：無母數檢定主要回答「差異或關聯是否存在」。
+-   **本段焦點：估計**。不假設母體服從特定分配，而是直接從資料估計感興趣的量：
+    1.  **等級相關**：量化單調關係的強度（$\rho_s,\tau$）
+    2.  **核密度估計 (KDE)**：估計密度函數 $f(x)$
+    3.  **無母數迴歸**：估計條件期望函數 $m(x)=E(Y\mid X=x)$
+-   **核心手段**：依賴樣本的**秩 (Rank)** 或**局部資訊 (Local
+    information)**。
+
+# 1.等級相關
+
+> 衡量兩變數之間的**單調關係強度**。 
+
+- 1.1 Spearman 等級相關係數 
+
+- 1.2 Kendall 等級相關係數
+
+## 1.1 Spearman 等級相關係數 {.smaller}
+
+-   **起源**：Spearman (1904)
+-   **估計目標**：母體參數
+    $\rho_s=\mathrm{Corr}\big(F_X(X),F_Y(Y)\big)$，衡量兩變數之間的**單調關係強度**。
+-   **估計方法**：將 $X_i,Y_i$ 各自轉為等級
+    $R(X_i),R(Y_i)$，再計算等級的 Spearson 相關：
+    $$\hat{\rho}_s=\frac{\sum_{i=1}^n\big(R(X_i)-\bar R_X\big)\big(R(Y_i)-\bar R_Y\big)}{\sqrt{\sum_{i=1}^n\big(R(X_i)-\bar R_X\big)^2\,\sum_{i=1}^n\big(R(Y_i)-\bar R_Y\big)^2}}$$
+-   **無 ties 時**，可進一步簡化為
+    $$\hat{\rho}_s=1-\frac{6\sum_{i=1}^n d_i^2}{n(n^2-1)},\qquad d_i=R(X_i)-R(Y_i)$$
+-   **Ties**：採用**中間秩 (mid-ranks)**。例如 12, 12 位於第 2、3
+    位，兩者皆給 $2.5$；此時不能使用上面的簡化公式。
+-   **範圍與解釋**：
+    -   $\hat\rho_s\in[-1,1]$。
+    -   $\hat\rho_s=1$ 或 $-1$ 表示完全單調關係。
+    -   $\lvert\hat\rho_s\rvert$ 越接近 $1$，表示單調關係越強。
+    -   $\rho_s=0$ **不代表** $X,Y$ 獨立。
+-   **適用情境**：次序資料、非常態資料，或兩變數關係具有單調性但不一定呈線性。
+
+## Spearman：假設檢定 {.smaller}
+
+若將 Spearman 用於檢定，常考慮
+
+$$H_0:\rho_s=0,\qquad H_1:\rho_s\neq0$$
+
+-   **小樣本**：以精確分布（查表或軟體）決定臨界值，若
+    $\lvert\hat\rho_s\rvert\ge$ 臨界值則拒絕 $H_0$。
+
+-   **大樣本**（經驗法則 $n>30$），$H_0$ 成立時：
+    $$t=\hat\rho_s\sqrt{\frac{n-2}{1-\hat\rho_s^2}}\;\dot\sim\;t_{n-2}$$
+
+## Spearman 範例 {.smaller}
+
+隨機抽取 5 位同學，觀察微積分期中成績 $X$ 與每週打電動時間 $Y$。
+
+|   學生   | $X_i$ | $Y_i$ | $R(X_i)$ | $R(Y_i)$ | $d_i=R(X_i)-R(Y_i)$ |     $d_i^2$     |
+|:---------:|:---------:|:---------:|:---------:|:---------:|:---------:|:---------:|
+|    A     |  85   |  12   |    4     |    2     |          2          |        4        |
+|    B     |  60   |  20   |    1     |    5     |        $-4$         |       16        |
+|    C     |  92   |   5   |    5     |    1     |          4          |       16        |
+|    D     |  75   |  18   |    3     |    4     |        $-1$         |        1        |
+|    E     |  65   |  15   |    2     |    3     |        $-1$         |        1        |
+| **總和** |       |       |          |          |                     | $\sum d_i^2=38$ |
+
+因此
+
+$$\hat\rho_s=1-\frac{6\sum_{i=1}^n d_i^2}{n(n^2-1)}=1-\frac{6\times38}{5(5^2-1)}=1-\frac{228}{120}=-0.9$$
+
+**解釋**：本樣本呈現非常強的負單調關係，也就是微積分成績越高，打電玩時數通常越少。但這只是**關聯而非因果關係**。
+
+
+## 1.2 Kendall 等級相關係數 {.smaller}
+
+-   **起源**：Kendall (1938)
+-   **估計目標**：母體參數 $\tau$。
+令 $(X_1,Y_1)$ 與 $(X_2,Y_2)$ 為 i.i.d. 的兩對觀測，
+    $$\tau=P\big((X_1-X_2)(Y_1-Y_2)>0\big)-P\big((X_1-X_2)(Y_1-Y_2)<0\big)$$
+    即「**同序機率 − 反序機率**」，具有直接的機率解釋。
+-   **估計方法**：將 $n$ 筆資料兩兩比較，共 $\binom n2=\frac{n(n-1)}{2}$
+    個配對：
+    -   **同序 (concordant)**：$X_i-X_j$ 與 $Y_i-Y_j$ 同號
+    -   **反序 (discordant)**：$X_i-X_j$ 與 $Y_i-Y_j$ 異號
+-   **無 ties 時**：
+    $$\hat\tau=\frac{N_c-N_d}{\binom n2}=\frac{N_c}{\binom n2}-\frac{N_d}{\binom n2}$$
+    即樣本中「**同序比例 − 反序比例**」，是 $\tau$ 的樣本版本。
+-   **範圍與解釋**：
+    -   $\hat\tau\in[-1,1]$。
+    -   $\hat\tau=1$：所有配對皆同序；$\hat\tau=-1$：所有配對皆反序。
+    -   $\hat\tau=0$：同序與反序的比例相等。
+-   **Ties**：$X_i=X_j$ 或 $Y_i=Y_j$
+    的配對既非同序也非反序，分母需修正，得 $\hat\tau_b$（R 預設）。
+-   **檢定**：$H_0:\tau=0$；小樣本用精確分布，大樣本用常態近似。
+
+## Kendall 範例：同一筆資料 {.smaller}
+
+依 $X$ 由小到大排序：
+
+| 學生 | $X_i$ | $Y_i$ | $R(X_i)$ | $R(Y_i)$ |
+|:----:|:-----:|:-----:|:--------:|:--------:|
+|  B   |  60   |  20   |    1     |    5     |
+|  E   |  65   |  15   |    2     |    3     |
+|  D   |  75   |  18   |    3     |    4     |
+|  A   |  85   |  12   |    4     |    2     |
+|  C   |  92   |   5   |    5     |    1     |
+
+因 $R(X_i)$ 已排序，只需逐一比較其後的 $R(Y_i)$：
+
+-   B（5）：後面 3, 4, 2, 1 皆較小，4 個反序
+-   E（3）：後面 4 較大（1 個同序），2, 1 較小（2 個反序）
+-   D（4）：後面 2, 1 較小，2 個反序
+-   A（2）：後面 1 較小，1 個反序
+
+$N_c=1$，$N_d=4+2+2+1=9$，共 $1+9=10=\binom52$ 個配對：
+
+$$\hat\tau=\frac{1-9}{10}=\frac{1}{10}-\frac{9}{10}=-0.8$$
+
+**解釋**：同序比例 $10\%$、反序比例 $90\%$，任取兩位學生，約 90%
+是「分數較高者打電玩時數較短」，呈強烈負單調關係。
+
+> 與 Spearman 的結論一致。
+
+## R 實作：Spearman 與 Kendall
+
+```{r}
+#| echo: true
+#| eval: true
+
+X <- c(85, 60, 92, 75, 65)   # 微積分分數
+Y <- c(12, 20,  5, 18, 15)   # 打電玩時數
+
+sp <- cor.test(X, Y, method = "spearman")
+kd <- cor.test(X, Y, method = "kendall")
+
+round(c(rho = unname(sp$estimate), p_spearman = sp$p.value,
+        tau = unname(kd$estimate), p_kendall = kd$p.value), 4)
+```
+
+-   本例沒有 ties，且 $n=5$，因此可以使用**精確方法**進行檢定。
+-   若存在 ties，Spearman 的精確 $p$-value
+    通常無法使用，需改採漸近方法，例如 `exact = FALSE`。
+-   本例 $$\hat\rho_s=-0.9,\qquad \hat\tau=-0.8.$$
+
+## 小結：Spearman 與 Kendall {.smaller}
+
+| 比較維度 | Spearman $\hat{\rho}_s$ | Kendall $\hat{\tau}$ |
+|:-----------------------|:-----------------------|:-----------------------|
+| 本質 | 等級的 Pearson 相關 | 同序與反序比例之差 |
+| 解釋 | 單調關係的強度 | 同序機率 − 反序機率 |
+| Ties | mid-ranks，用 Pearson 形式 | $\hat\tau_b$ 修正分母 |
+| 計算 | 排序後計算 | 兩兩配對比較 |
+| 數值大小 | 同一資料通常 $\lvert\hat\rho_s\rvert>\lvert\hat\tau\rvert$，不可直接比較 |  |
+| 本例 | $-0.9$ | $-0.8$ |
+
+> **Takeaway**：Spearman 與 Kendall
+> 都以**秩與順序資訊**衡量單調關係，不需要假設資料服從特定分配。Spearman
+> 可視為「rank 上的 Pearson correlation」；Kendall
+> 則具有直接的機率解釋。兩者都適合用來估計單調關係的強度，而不只是進行假設檢定。
+
+# 2 核密度估計 (KDE)
+
+相關係數回答「兩變數的關聯程度」；若想了解一個變數本身的**分布形狀**，就需要估計密度函數。
+
+------------------------------------------------------------------------
+
+### KDE：動機與估計目標
+
+-   **估計目標**：未知的母體密度函數 $f(x)$。
+-   **為什麼需要平滑**：
+    -   ECDF 是階梯函數，在觀測點不可微、其餘處導數為 0，無法作為密度。
+    -   直方圖是分段常數函數，結果受**組距**與**組界起點**影響。
+-   **KDE 的想法**：在每個觀測值附近放置一個平滑的 kernel，再將所有
+    kernel 相加，得到密度估計曲線。
+-   與直方圖的差異：KDE 不需要設定組界起點，但仍須選擇頻寬
+    (h)，以控制平滑程度。
+
+## KDE：直觀理解
+
+```{r}
+#| echo: false
+#| fig-height: 4
+
+x <- c(2, 2.5, 4.5, 5, 5.5, 9)
+h <- 0.6
+xx <- seq(0, 11, length.out = 500)
+
+k   <- sapply(x, function(xi) dnorm(xx, mean = xi, sd = h)) / length(x)
+kde <- rowSums(k)
+
+plot(xx, kde, type = "n", ylim = c(-0.03, max(kde) * 1.1),
+     xlab = "x", ylab = "Density")
+for (i in seq_along(x)) lines(xx, k[, i], lty = 2)
+lines(xx, kde, lwd = 3, col = "blue")
+points(x, rep(0, length(x)), pch = 19, col = "red")
+legend("topright", legend = c("kernel","KDE"),
+       lty = c(2, 1), lwd = c(1, 3), col = c("black", "blue"), cex = 0.8)
+```
+
+每個觀測值貢獻一個以它為中心的 kernel（已除以 $n$），全部相加即為
+$\hat f_h$。
+
+## KDE：估計式 {.smaller}
+
+設 $X_1,\dots,X_n$ 為 i.i.d.，密度為 $f$。對任意 $x$，
+
+$$\hat f_h(x)=\frac{1}{nh}\sum_{i=1}^nK\!\left(\frac{x-X_i}{h}\right)=\frac1n\sum_{i=1}^nK_h(x-X_i),\qquad K_h(u)=\frac1hK\!\left(\frac uh\right)$$
+
+-   n:樣本數
+-   (\hat f_h(x))：我們估計的密度。
+-   **核函數**
+    $K$：$K(u)\ge0$、$\int K(u)\,du=1$，通常對稱（Gaussian、Triangle、Box）。
+-   **頻寬** $h>0$：控制每個 kernel 的寬度，進而決定曲線的平滑程度。
+-   **為何是密度**：每個 $K_h(x-X_i)$ 是密度，平均後仍是密度，
+    $$\int\hat f_h(x)\,dx=\frac1n\sum_{i=1}^n\int K_h(x-X_i)\,dx=1$$
+
+```{r}
+#| echo: false
+#| fig-width: 7     # 增加圖片寬度 (預設約為 7)
+#| fig-height: 5    # 增加圖片高度 (預設約為 5)
+
+u <- seq(-2, 2, length.out = 1000)
+
+gaussian <- dnorm(u)
+triangle <- pmax(1 - abs(u), 0)
+box <- ifelse(abs(u) <= 1, 0.5, 0)
+
+plot(u, gaussian, type = "l", lwd = 2,
+     ylim = c(0, 1.1),
+     xlab = "u", ylab = "K(u)",col="pink")
+lines(u, triangle, lwd = 2, lty = 2,col="blue")
+lines(u, box, lwd = 2, lty = 3,col="brown")
+
+legend("topright",
+       legend = c("Gaussian", "Triangle", "Box"),
+       lty = c(1, 2, 3),col=c("pink","blue","brown"),
+       lwd = 2)
+```
+
+## KDE：頻寬Bandwidth ($h$) 的視覺化影響 {.smaller}
+
+```{r}
+#| echo: false
+#| fig-height: 4.5
+
+set.seed(123)
+x <- c(rnorm(100, 0, 1), rnorm(50, 5, 1.5))   # 模擬雙峰資料
+
+d1 <- density(x, bw = "nrd0")
+d2 <- density(x, bw = 0.1)
+d3 <- density(x, bw = 3)
+
+plot(d1, lwd = 2, col = "red", ylim = range(d1$y, d2$y, d3$y),
+     main = "KDE：Bandwidth 的影響", xlab = "數值", ylab = "機率密度")
+lines(d2, lty = 2, lwd = 2, col = "green3")
+lines(d3, lty = 3, lwd = 2, col = "blue")
+rug(x)
+legend("topright",
+       legend = c(sprintf("nrd0 (h = %.2f)", d1$bw), "h = 0.1（過小）", "h = 3（過大）"),
+       col = c("red", "green3", "blue"), lty = 1:3, lwd = 2, cex = 0.8)
+```
+
+-   $h$
+    太小：每個觀測值的影響範圍小，曲線出現許多局部波動(overfitting)。
+-   $h$ 太大：過度平滑，掩蓋局部結構，例如雙峰。
+
+**重點**：頻寬 $h$ 對結果的影響通常遠大於 kernel 的形狀。
+
+## KDE Example：Histogram 與 KDE 的比較 {.smaller}
+
+模擬 150 位學生的每週打電玩時數（雙峰）：
+
+```{r}
+#| echo: true
+#| eval: true
+#| fig-height: 4
+
+set.seed(10)
+game <- c(rnorm(100, 8, 2), rnorm(50, 16, 2.5))   # 模擬資料
+
+d <- density(game)
+b <- hist(game, breaks = 15, plot = FALSE)
+hist(game, probability = TRUE, breaks = 15,
+     ylim = c(0, max(b$density, d$y) * 1.1),
+     main = "Histogram + KDE", xlab = "每週打電玩時數", ylab = "Density")
+lines(d, lwd = 2, col = "red")
+rug(game)
+```
+
+Histogram 呈階梯狀，KDE 為平滑曲線，兩者都能看出雙峰；KDE
+不需預設分配，$h$ 是決定結果的關鍵。
+
+> **Takeaway：** KDE 不需要指定資料服從常態、Gamma
+> 等特定分配，而是利用每個觀測值附近的局部資訊，直接估計母體密度
+> $f(x)$。其中 **bandwidth** $h$ 是決定估計結果的關鍵。
+
+# 3 無母數迴歸 (Nonparametric Regression)
+
+KDE 估計的是 $X$ 的**邊際密度**；迴歸關心的是：**當** $X=x$ 時，$Y$
+的平均是多少？
+
+## Nadaraya–Watson：目標與估計式 {.smaller}
+
+-   **估計目標**：條件期望函數 $m(x)=E(Y\mid X=x)$，即 $X=x$ 時 $Y$ 的平均。
+-   **核心想法**：不預設直線關係，而是利用目標位置附近的觀測值，估計該位置的平均反應。
+-   **加權平均**：沿用 KDE 的 $K_h(u)=\frac1hK(u/h)$，距離 $x$ 越近，權重越大：
+    $$\hat m_h(x)=\frac{\sum_{i=1}^nK_h(x-X_i)\,Y_i}{\sum_{i=1}^nK_h(x-X_i)}=\sum_{i=1}^nw_i(x)\,Y_i,\qquad w_i(x)=\frac{K_h(x-X_i)}{\sum_{j=1}^nK_h(x-X_j)}$$
+    分母把權重正規化，使 $\sum_iw_i(x)=1$。
+-   **局部常數**：每個目標位置用附近資料估計一個常數；改變目標位置，連起來就是平滑的迴歸曲線。
+
+## NW 範例：估計讀書 4 小時的平均分數 {.smaller}
+
+| 讀書時數 $X_i$ | 3.0 | 3.8 | 4.1 | 4.3 | 5.0 |
+|:--:|:--:|:--:|:--:|:--:|:--:|
+| 考試分數 $Y_i$ | 60 | 70 | 76 | 74 | 85 |
+| **Box 核權重** | 0 | $1/3$ | $1/3$ | $1/3$ | 0 |
+| **Gaussian 核權重** | 4.50% | 30.68% | 32.57% | 27.76% | 4.50% |
+
+設 $x=4$、$h=0.5$（Box 核只用距離不超過 $0.5$ 的點；Gaussian 權重正比於 $e^{-(x-X_i)^2/(2h^2)}$）：
+
+$$\hat m_{\text{Box}}(4)=\frac{70+76+74}{3}\approx73.33,\qquad\hat m_{\text{Gauss}}(4)\approx73.29$$
+
+**解讀**：NW 用讀書時數接近 4 的學生估計該處的平均分數，不要求資料中必須存在 $X=4$。
+Gaussian 核讓較遠的點仍有小權重，但 3.0 與 5.0 離 4 同樣遠，兩者作用大致抵銷，所以兩種核的結果幾乎相同。
+
+## NW：頻寬h的取捨 {.smaller}
+
+**分母**：$\frac1n\sum_iK_h(x-X_i)=\hat f_h(x)\to f(x)$。
+
+**分子的期望**（先對 $X$ 取條件期望，再代換 $u=x-hv$）：
+$$E\big[K_h(x-X)\,Y\big]=E\big[K_h(x-X)\,m(X)\big]=\int K_h(x-u)\,m(u)f(u)\,du=\int K(v)\,(mf)(x-hv)\,dv\;\longrightarrow\;m(x)f(x)$$
+
+兩者相除，$\hat m_h(x)\to m(x)f(x)/f(x)=m(x)$。一致性需要：
+
+-   $h\to0$：用越來越近的資料，偏差消失。
+-   $nh\to\infty$：局部仍有足夠多的觀測值，變異消失。
+
+**頻寬的取捨**：$h$ 太大會混入遠處的資料（偏差大）；$h$ 太小則只依賴少數觀測值（變異大）。
+**選擇**：與 KDE 相同，可用留一交叉驗證，
+$$\mathrm{CV}(h)=\frac1n\sum_{i=1}^n\big(Y_i-\hat m_{h,-i}(X_i)\big)^2$$
+取最小者；MSE 的最佳階為 $n^{-4/5}$（標準結果，同 KDE）。
+
+## NW 範例：晶片耗電量與邊界偏差 {.smaller}
+
+10 組（電壓 $X$，耗電量 $Y$）：
+
+| $X$ | 1.0 | 1.5 | 2.0 | 2.5 | 3.0 | 3.5 | 4.0 | 4.3 | 4.7 | 5.0 |
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| $Y$ | 2.1 | 2.3 | 3.0 | 3.3 | 4.2 | 4.8 | 5.5 | 6.8 | 9.5 | 12.0 |
+
+以 Box 核、$h=0.5$ 估計 $x_0=5.0$：落在 $[4.5,5.5]$ 的只有 $X=4.7,\,5.0$，
+$$\hat m(5.0)=\frac{9.5+12.0}{2}=10.75<12.0$$
+右側沒有資料，估計值被拉低，這就是**邊界偏差**。改在局部擬合直線（局部線性，LOESS 屬此類）可改善。
+
+
+## NW：R 語言實作 {.smaller}
+
+```{r}
+#| echo: true
+#| eval: true
+#| fig-height: 4
+
+X <- c(1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.3, 4.7, 5.0)
+Y <- c(2.1, 2.3, 3.0, 3.3, 4.2, 4.8, 5.5, 6.8, 9.5, 12.0)
+
+# Nadaraya-Watson，高斯核 K_h(u) = dnorm(u, sd = h)
+nw <- function(x0, h) {
+  sapply(x0, function(x) {
+    w <- dnorm(x - X, sd = h)
+    sum(w * Y) / sum(w)
+  })
+}
+
+xs <- seq(1, 5, length.out = 200)
+plot(X, Y, pch = 16, cex = 1.1, xlim = c(0, 6), ylim = c(0, 15),
+     main = "NW：頻寬的影響", xlab = "運作電壓 (X)", ylab = "耗電量 (Y)")
+lines(xs, nw(xs, 0.2), col = "red",   lty = 2, lwd = 2)
+lines(xs, nw(xs, 0.5), col = "blue",  lty = 1, lwd = 2)
+lines(xs, nw(xs, 1.5), col = "green3", lty = 3, lwd = 2)
+legend("topleft", legend = c("h = 0.2（過小）", "h = 0.5", "h = 1.5（過大）"),
+       col = c("red", "blue", "green3"), lty = c(2, 1, 3), lwd = 2, cex = 0.8)
+```
+
+-   $h$ 小：曲線貼著資料點；$h$ 大：過度平滑，抹平高電壓區的陡升。
+-   $h=0.5,\,1.5$ 的曲線在右端點低於資料。
+
+## 小結：三種無母數估計方法
+
+|              | 等級相關      | KDE               | 無母數迴歸             |
+|:-------------|:--------------|:------------------|:-----------------------|
+| **估計對象** | $\rho_s,\tau$ | $f(x)$            | $m(x)$                 |
+| **核心資訊** | Rank          | Local information | Local information      |
+| **調節參數** | 無            | Bandwidth $h$     | Bandwidth $h$          |
+| **主要特性** | 單調關係      | 估計密度          | 密度 $m(x)$ 具有平滑性 |
+
+## 無母數估計的代價
+
+當估計的是函數而不是有限維參數時，通常需要更多資料。因此維度越大，收斂越慢
+
+-   無母數方法的核心取捨
+
+$$\boxed{\text{較少的模型假設}\quad\Longleftrightarrow\quad\text{較慢的收斂與較高的資料需求}}$$
+
+> **Takeaway：**
+>
+> -   Spearman / Kendall：估計**單調關係的強度**。
+> -   KDE：估計**分布的形狀**。
+> -   Nonparametric regression：估計 $Y$ 隨 $X$ 的條件平均變化。
+>
+> 三者共同的核心都是：**減少對母體分布或函數形式的假設，改由資料本身提供局部資訊。**
