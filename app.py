@@ -25,18 +25,16 @@ st.markdown(
     " 核迴歸**。請先輸入 API Key 與數據，Agent 將導引你完成標準化分析流程。"
 )
 
-# 1. 頂層初始化 Session State，確保 messages 恆存在
+# 1. 頂層初始化 Session State
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
-# 🔑 第一步：最前面要求輸入個人 Gemini API Key
+# 🔑 第一步：API Key
 st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
-st.info("提示：API Key 是連接 Google 伺服器的通行證，請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請，通常以 `AIza` 開頭。")
+st.info("提示：API Key 是連接 Google 伺服器的通行證，請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請。")
 user_api_key = st.text_input(
     "請輸入你的 Gemini API Key：", type="password", key="api_key_input"
 )
-
-# 若 Secrets 有設定可備用，否則優先使用頁面輸入
 api_key = user_api_key or st.secrets.get("GEMINI_API_KEY", "")
 
 if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
@@ -45,8 +43,7 @@ if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
 
 MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
 
-
-# 2. R 語言繪圖執行引擎 (ASCII/英文標籤防亂碼)
+# 2. R 語言繪圖執行引擎
 def execute_r_code_and_get_image(r_code):
   plot_filename = "output_plot.png"
   if os.path.exists(plot_filename):
@@ -55,7 +52,7 @@ def execute_r_code_and_get_image(r_code):
   wrapped_r_script = f"""
     options(warn=-1)
     png('{plot_filename}', width=800, height=550, res=110)
-    set.seed(42) # 固定隨機種子，確保所有人繪圖與結果 100% 一致
+    set.seed(42) # 固定隨機種子
     {r_code}
     dev.off()
     """
@@ -75,7 +72,7 @@ def execute_r_code_and_get_image(r_code):
     return None, str(e)
 
 
-# 3. 智能連線發送函式 (含退避重試與模型降級)
+# 3. 智能連線發送函式
 def send_msg_smart(prompt, config):
   last_err = None
   for model_name in MODEL_CANDIDATES:
@@ -113,7 +110,6 @@ def send_msg_smart(prompt, config):
       except Exception as e:
         last_err = e
         break
-
   raise Exception(f"連線失敗，請確認 API Key 是否輸入正確。詳細：{last_err}")
 
 
@@ -137,26 +133,32 @@ else:
     uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
     if uploaded_file:
       df = pd.read_csv(uploaded_file)
+      df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
       preview_csv = df.head(5).to_csv(index=False)
       total_rows = len(df)
-      initial_data_prompt = f"這是我提供的數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。"
+      
+      initial_data_prompt = (
+          f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
+          "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保你的變數名稱與資料欄位一致！"
+      )
       has_input = True
   else:
     raw_text = st.text_area(
-        "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18,"
-        " 15))：",
+        "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
         height=100,
         placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
     )
     if raw_text.strip():
-      initial_data_prompt = f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}"
+      initial_data_prompt = (
+          f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
+          "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在程式碼開頭包含這段變數宣告，確保程式碼可獨立執行！"
+      )
       has_input = True
 
   if has_input:
     if "gemini_client" not in st.session_state:
       st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    # 🌟 絕對嚴格防偷跑的 System Prompt
     sys_instruct = """
         你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
         你的任務是引導學生完成無母數統計學習，重點深耕【Nadaraya-Watson (NW) 核迴歸】實作，絕對禁止使用 LOESS。
@@ -164,33 +166,35 @@ else:
         【嚴格的兩階段互動規則】：
         你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
 
-        === 狀態一：當學生剛上傳或提供數據時 ===
+        === 狀態一：當學生剛提供數據時 ===
         你的任務【只有說明與推薦】，做完必須立刻停下！
-        1. 簡述三大概念：等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸。
-        2. 原理解析：說明 Gaussian Kernel 與 Epanechnikov Kernel 差別，以及頻寬 h 的 Bias-Variance Tradeoff (nrd0 vs SJ)。
-        3. 【AI 推薦】：根據學生的數據，明確推薦一個 Kernel 與 Bandwidth (h) 設定，並說明理由。
-        4. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
-        ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。如果你偷跑畫圖，系統會崩潰。
+        1. 成功提示與資料簡述：開頭必須先說「成功讀取資料！」，並簡單描述讀取到的資料筆數與變數資訊。
+        2. 簡述三大概念：等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸。
+        3. 原理解析：說明 Gaussian Kernel 與 Epanechnikov Kernel 差別，以及頻寬 h 的 Bias-Variance Tradeoff (nrd0 vs SJ)。
+        4. 【AI 推薦】：根據學生的數據，明確推薦一個 Kernel 與 Bandwidth (h) 設定，並說明理由。
+        5. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
+        ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。如果你偷跑，學生將無法學習。
 
         === 狀態二：當學生明確回覆了他選擇的 Kernel 與 Bandwidth 後 ===
         你的任務是【執行計算與畫圖】。
         1. 確認學生的參數。
         2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
         3. 輸出完整的 R 繪圖程式碼 (```r ... ```)。
-        4. 程式碼必須包含 `set.seed(42)`，且所有繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文（防止亂碼）。
+        ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】，不能假設資料已存在。
+        4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文（防止亂碼）。
+        
+        ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二輸出結果時，直接給出專業的說明、公式與程式碼即可。絕對不准向使用者解釋你如何遵守系統設定（例如：絕對不要講「完全無偷跑套件」、「無使用 LOESS」、「圖表已純 ASCII 化」等廢話）。保持教學語言的專業與簡潔。
         """
 
     config = types.GenerateContentConfig(
         system_instruction=sys_instruct, temperature=0.0
     )
 
-    # 5. 初始化對話
     if "chat_session" not in st.session_state:
-      # 💡 給 AI 的第一句話強制帶上禁忌指令，確保它不會無視 System Prompt
       prompt_to_send = (
           f"{initial_data_prompt}\n\n"
-          "請執行『狀態一』：簡述概念、說明原理並給出你的推薦。\n"
-          "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】進行迴歸運算或繪圖，只要停下來問我的選擇即可。"
+          "請執行『狀態一』：開頭先宣告成功讀取資料並簡述，接著說明概念、原理並給出你的推薦。\n"
+          "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】繪圖，只要停下來問我的選擇即可。"
       )
       with st.spinner("Agent 分析數據並準備教學引導中..."):
         try:
@@ -205,14 +209,12 @@ else:
     st.markdown("---")
     st.subheader("💬 步驟 3：對話實作區")
 
-    # 6. 渲染歷史對話與歷史繪圖
     for msg in st.session_state.get("messages", []):
       with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if "img_path" in msg:
           st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    # 7. 處理同學對話輸入
     if user_input := st.chat_input(
         "回覆你的選擇 (例如：我選擇 Gaussian Kernel 與 SJ 頻寬，請進行 NW"
         " 迴歸...)"
@@ -221,11 +223,11 @@ else:
         st.markdown(user_input)
       st.session_state.messages.append({"role": "user", "content": user_input})
 
-      # 💡 在學生回答後，解除限制，允許 AI 進入狀態二
       trigger_stage_2_prompt = (
           f"{user_input}\n\n"
           "[系統提示：學生已做出選擇，現在正式進入『狀態二』。請輸出 NW"
-          " 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)。]"
+          " 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)，務必確保 R 程式碼本身包含資料宣告或讀取，以免執行失敗！\n"
+          "⚠️ 再次警告：直接給出專業的推論與程式碼，嚴禁輸出「遵守無 LOESS 規定」、「採用 ASCII 標籤防亂碼」等邀功廢話！]"
       )
 
       with st.chat_message("assistant"):
@@ -237,7 +239,6 @@ else:
 
             msg_data = {"role": "assistant", "content": response_text}
 
-            # 抓取 R Code 並在背景執行 Rscript 繪圖
             r_code_match = re.search(
                 r"```r\n(.*?)```", response_text, re.DOTALL
             )
@@ -245,14 +246,7 @@ else:
               r_code = r_code_match.group(1)
               if any(
                   kw in r_code
-                  for kw in [
-                      "plot(",
-                      "hist(",
-                      "lines(",
-                      "boxplot(",
-                      "density(",
-                      "ksmooth(",
-                  ]
+                  for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
               ):
                 img_path, err = execute_r_code_and_get_image(r_code)
                 if img_path:
@@ -261,7 +255,7 @@ else:
                   )
                   msg_data["img_path"] = img_path
                 elif err:
-                  st.warning(f"R 繪圖訊息：{err}")
+                  st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
 
             st.session_state.messages.append(msg_data)
 
