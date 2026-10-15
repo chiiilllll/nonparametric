@@ -34,7 +34,7 @@ if "messages" not in st.session_state:
 # ==========================================
 st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
 st.info("提示：請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請。輸入完畢請按 Enter。")
-api_key = st.text_input("請輸入你的 Gemini API Key：", type="password").strip()
+api_key = st.text_input("請輸入你的 Gemini API Key：", type="password")
 
 if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
     st.session_state.clear()
