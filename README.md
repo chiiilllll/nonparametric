@@ -6,7 +6,7 @@ https://nonparametric-fdxv8sf4xtbhdgckvzqczp.streamlit.app/
 
 需輸入自己的API key即可啟動
 
-可使用data.csv範例資料集做測試
+可使用dat.csv或data.csv範例資料集做測試
 
 
 *qmd檔則為無母數估計方法介紹簡報
