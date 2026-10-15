@@ -29,20 +29,31 @@ st.markdown(
 if "messages" not in st.session_state:
   st.session_state.messages = []
 
-# 🔑 第一步：API Key
+# 🔑 第一步：API Key (防呆安全寫法)
 st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
-st.info("提示：API Key 是連接 Google 伺服器的通行證，請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請。")
-user_api_key = st.text_input(
-    "請輸入你的 Gemini API Key：", type="password", key="api_key_input"
-)
-api_key = user_api_key
-##api_key = user_api_key or st.secrets.get("GEMINI_API_KEY", "")
+st.info("提示：輸入完 API Key 後，請務必按下鍵盤的 【Enter】 鍵確認。")
+
+# 優先讀取畫面輸入的 Key
+api_key = st.text_input("請輸入你的 Gemini API Key：", type="password")
+
+# 如果畫面沒輸入，才安全地去後台找備用 Key
+if not api_key:
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
 
 if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
   st.session_state.clear()
   st.rerun()
 
-MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-3.6-flash"]
+# 如果連後台都沒有 Key，就直接停止執行下面的程式並跳出警告
+if not api_key:
+    st.warning("⚠️ 請在上方輸入有效的 Gemini API Key（輸入完請按 Enter）以開啟學習 Agent。")
+    st.stop()
+
+# 模型備援清單 (包含高額度的 1.5 和 2.5 Flash 防塞車)
+MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.6-flash"]
 
 # 2. R 語言繪圖執行引擎
 def execute_r_code_and_get_image(r_code):
