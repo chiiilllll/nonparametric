@@ -35,7 +35,8 @@ st.info("提示：API Key 是連接 Google 伺服器的通行證，請至 [Googl
 user_api_key = st.text_input(
     "請輸入你的 Gemini API Key：", type="password", key="api_key_input"
 )
-api_key = user_api_key or st.secrets.get("GEMINI_API_KEY", "")
+api_key = user_api_key
+##api_key = user_api_key or st.secrets.get("GEMINI_API_KEY", "")
 
 if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
   st.session_state.clear()
@@ -131,9 +132,23 @@ else:
 
   if input_method == "上傳 CSV 檔案":
     uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+    
+    # 必須確認檔案真的傳上來了，才能進行讀取與顯示
     if uploaded_file:
       df = pd.read_csv(uploaded_file)
       df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
+      
+      # 💡 檔案存好且 df 建立後，馬上在這裡顯示預覽與 EDA
+      st.success("資料讀取成功！")
+      col1, col2 = st.columns(2)
+      with col1:
+          st.write("預覽資料：")
+          st.dataframe(df.head(5))
+      with col2:
+          st.write("敘述性統計：")
+          st.dataframe(df.describe())
+          
+      # 接著組合給 AI 看的 Prompt
       preview_csv = df.head(5).to_csv(index=False)
       total_rows = len(df)
       
@@ -142,6 +157,7 @@ else:
           "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保你的變數名稱與資料欄位一致！"
       )
       has_input = True
+      
   else:
     raw_text = st.text_area(
         "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
@@ -168,17 +184,25 @@ else:
 
         === 狀態一：當學生剛提供數據時 ===
         你的任務【只有說明與推薦】，做完必須立刻停下！
-        1. 成功提示與資料簡述：開頭必須先說「成功讀取資料！」，並簡單描述讀取到的資料筆數與變數資訊。
+        1. 成功提示與資料簡述：開頭先宣告「成功讀取資料！」，並簡單描述讀取到的資料筆數與變數資訊。
         2. 簡述三大概念：等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸。
-        3. 原理解析：說明 Gaussian Kernel 與 Epanechnikov Kernel 差別，以及頻寬 h 的 Bias-Variance Tradeoff (nrd0 vs SJ)。
-        4. 【AI 推薦】：根據學生的數據，明確推薦一個 Kernel 與 Bandwidth (h) 設定，並說明理由。
-        5. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
+        3. 【提供多元 Kernel 選項與原理】：向學生介紹以下幾種常見的核函數：
+           - Gaussian (高斯核)：平滑度最高，實務上最常用。
+           - Epanechnikov：在均方整合誤差 (MISE) 理論下漸進最佳 (Asymptotic Efficiency)。
+           - Rectangular / Uniform (均勻核)：權重皆相等，擬合曲線會呈階梯狀，適合觀察極端權重。
+           - Triangular (三角核) 或 Biweight (雙權核)：權重遞減速度不同於高斯核的選擇。
+        4. 【提供多元 Bandwidth (h) 選項與原理】：說明 Bias-Variance Tradeoff，並比較以下演算法：
+           - nrd0 (Silverman) / nrd (Scott)：經驗法則，計算極快，但在雙峰或非常態資料易過度平滑。
+           - SJ (Sheather-Jones)：Plug-in 法，目前學術界最推薦，適應性佳。
+           - ucv (Unbiased CV) / bcv (Biased CV)：交叉驗證法，資料驅動，但小樣本下變異較大。
+        5. 【AI 專業推薦】：根據學生的數據特徵，明確推薦「一個 Kernel + 一個 Bandwidth 方法」，並說明背後統計理由。
+        6. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
         ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。如果你偷跑，學生將無法學習。
 
         === 狀態二：當學生明確回覆了他選擇的 Kernel 與 Bandwidth 後 ===
         你的任務是【執行計算與畫圖】。
         1. 確認學生的參數。
-        2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
+        2. 列出 NW 迴歸公式，特別提醒學生注意在資料端點處的「邊界偏差 (Boundary Bias)」。
         3. 輸出完整的 R 繪圖程式碼 (```r ... ```)。
         ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】，不能假設資料已存在。
         4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文（防止亂碼）。
