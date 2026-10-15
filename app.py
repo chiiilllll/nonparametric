@@ -163,6 +163,8 @@ if input_method == "上傳 CSV 檔案":
             f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
             "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
         )
+        # 📌 記住這條死命令，叫 AI 絕對不准亂捏資料
+        st.session_state.raw_data_instruction = "【強制規範】：在編寫 R 程式碼時，必須使用 `df <- read.csv('uploaded_data.csv')` 讀取資料，並以 `X <- df$X` 與 `Y <- df$Y`（或對應的欄位名稱）進行分析，絕對不准自己編造假資料！"
         has_input = True
 else:
     raw_text = st.text_area(
@@ -175,8 +177,9 @@ else:
             f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
             "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在開頭包含這段變數宣告，確保程式碼可獨立執行！"
         )
+        # 📌 把學生貼的原始數據直接綁進去
+        st.session_state.raw_data_instruction = f"【強制規範】：在編寫 R 程式碼時，必須使用以下這段學生提供的真實數據進行分析，絕對不准自己編造假資料：\n{raw_text.strip()}"
         has_input = True
-
 if has_input:
     if "gemini_client" not in st.session_state:
         st.session_state.gemini_client = genai.Client(api_key=api_key)
@@ -263,12 +266,14 @@ if has_input:
     # 一鍵觸發 NW 迴歸的按鈕
     if st.button("🚀 確認參數，執行 NW 核迴歸繪圖！", type="primary", use_container_width=True):
         clean_kernel = selected_kernel.split(" ")[0]
+        
+        # 🌟 關鍵修復：在點擊按鈕傳送時，強制把學生剛才輸入的「原始資料指令」再次塞給 AI
         trigger_stage_2_prompt = (
             f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
-            "[系統提示：學生已透過 UI 做出選擇，現在正式進入『狀態二』。請針對此選擇輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
+            f"{st.session_state.raw_data_instruction}\n"
+            "[系統提示：學生已透過 UI 做出選擇，現在正式進入『狀態二』。請務必使用上面指定的真實資料，輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
         )
         
-        # 顯示使用者的選擇
         st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！"})
         
         with st.chat_message("user"):
@@ -305,7 +310,6 @@ if has_input:
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
-    # 保留一般聊天框，讓學生可以自由問問題
     if user_input := st.chat_input("對剛才的理論有疑問嗎？可以在此自由向 Agent 發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
