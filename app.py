@@ -142,7 +142,7 @@ else:
   has_input = False
 
   if input_method == "上傳 CSV 檔案":
-  uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+      uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
   if uploaded_file:
     df = pd.read_csv(uploaded_file)
     df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
