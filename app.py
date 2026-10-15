@@ -22,46 +22,40 @@ st.set_page_config(page_title="無母數統計教學與實作 Agent", layout="wi
 st.title("🎓 無母數估計教學與實作 AI Agent")
 st.markdown(
     "本系統涵蓋 **等級相關**、**核密度估計 (KDE)** 與 **Nadaraya-Watson (NW)"
-    " 核迴歸**。請先輸入 API Key 與數據，Agent 將導引你完成標準化分析流程。"
+    " 核迴歸**。請輸入你的 API Key 與數據，開始標準化分析流程。"
 )
 
 # 1. 頂層初始化 Session State
 if "messages" not in st.session_state:
-  st.session_state.messages = []
+    st.session_state.messages = []
 
-# 🔑 第一步：API Key (防呆安全寫法)
+# ==========================================
+# 🔑 步驟 1：強制使用者輸入 API Key
+# ==========================================
 st.subheader("🔑 步驟 1：輸入個人 Gemini API Key")
-st.info("提示：輸入完 API Key 後，請務必按下鍵盤的 【Enter】 鍵確認。")
-
-# 優先讀取畫面輸入的 Key
+st.info("提示：請至 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請。輸入完畢請按 Enter。")
 api_key = st.text_input("請輸入你的 Gemini API Key：", type="password")
 
-# 如果畫面沒輸入，才安全地去後台找備用 Key
-if not api_key:
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-    except Exception:
-        pass
-
 if st.sidebar.button("🗑️ 清空歷史記錄並重新開始"):
-  st.session_state.clear()
-  st.rerun()
+    st.session_state.clear()
+    st.rerun()
 
-# 如果連後台都沒有 Key，就直接停止執行下面的程式並跳出警告
 if not api_key:
-    st.warning("⚠️ 請在上方輸入有效的 Gemini API Key（輸入完請按 Enter）以開啟學習 Agent。")
+    st.warning("⚠️ 請在上方輸入有效的 Gemini API Key 以開啟學習 Agent。")
     st.stop()
 
-# 模型備援清單 (包含高額度的 1.5 和 2.5 Flash 防塞車)
-MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.6-flash"]
+# 模型備援清單
+MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.6-flash"]
 
+# ==========================================
 # 2. R 語言繪圖執行引擎
+# ==========================================
 def execute_r_code_and_get_image(r_code):
-  plot_filename = "output_plot.png"
-  if os.path.exists(plot_filename):
-    os.remove(plot_filename)
+    plot_filename = "output_plot.png"
+    if os.path.exists(plot_filename):
+        os.remove(plot_filename)
 
-  wrapped_r_script = f"""
+    wrapped_r_script = f"""
     options(warn=-1)
     png('{plot_filename}', width=800, height=550, res=110)
     set.seed(42) # 固定隨機種子
@@ -69,81 +63,80 @@ def execute_r_code_and_get_image(r_code):
     dev.off()
     """
 
-  with open("temp_script.R", "w", encoding="utf-8") as f:
-    f.write(wrapped_r_script)
+    with open("temp_script.R", "w", encoding="utf-8") as f:
+        f.write(wrapped_r_script)
 
-  try:
-    result = subprocess.run(
-        ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
-    )
-    if os.path.exists(plot_filename):
-      return plot_filename, None
-    else:
-      return None, result.stderr
-  except Exception as e:
-    return None, str(e)
-
-
-# 3. 智能連線發送函式
-def send_msg_smart(prompt, config):
-  last_err = None
-  for model_name in MODEL_CANDIDATES:
-    for delay in [1, 3, 6]:
-      try:
-        if (
-            "chat_session" not in st.session_state
-            or st.session_state.get("active_model") != model_name
-        ):
-          chat = st.session_state.gemini_client.chats.create(
-              model=model_name, config=config
-          )
-          st.session_state.chat_session = chat
-          st.session_state.active_model = model_name
-
-        response = st.session_state.chat_session.send_message(prompt)
-        return response
-      except (ServerError, APIError) as e:
-        last_err = e
-        err_str = str(e)
-        if "503" in err_str or "UNAVAILABLE" in err_str:
-          time.sleep(delay)
-          continue
-        elif (
-            "429" in err_str
-            or "404" in err_str
-            or "RESOURCE_EXHAUSTED" in err_str
-            or "NOT_FOUND" in err_str
-        ):
-          if "chat_session" in st.session_state:
-            del st.session_state["chat_session"]
-          break
+    try:
+        result = subprocess.run(
+            ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
+        )
+        if os.path.exists(plot_filename):
+            return plot_filename, None
         else:
-          raise e
-      except Exception as e:
-        last_err = e
-        break
-  raise Exception(f"連線失敗，請確認 API Key 是否輸入正確。詳細：{last_err}")
+            return None, result.stderr
+    except Exception as e:
+        return None, str(e)
 
+# ==========================================
+# 3. 智能連線發送函式
+# ==========================================
+def send_msg_smart(prompt, config):
+    last_err = None
+    for model_name in MODEL_CANDIDATES:
+        for delay in [1, 3, 6]:
+            try:
+                if (
+                    "chat_session" not in st.session_state
+                    or st.session_state.get("active_model") != model_name
+                ):
+                    chat = st.session_state.gemini_client.chats.create(
+                        model=model_name, config=config
+                    )
+                    st.session_state.chat_session = chat
+                    st.session_state.active_model = model_name
 
-# 4. 主流程區塊
-if not api_key:
-  st.warning("⚠️ 請在上方輸入有效的 Gemini API Key 以開啟學習 Agent。")
-else:
-  st.markdown("---")
-  st.subheader("📊 步驟 2：提供實作數據")
+                response = st.session_state.chat_session.send_message(prompt)
+                return response
+            except (ServerError, APIError) as e:
+                last_err = e
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    time.sleep(delay)
+                    continue
+                elif (
+                    "429" in err_str
+                    or "404" in err_str
+                    or "RESOURCE_EXHAUSTED" in err_str
+                    or "NOT_FOUND" in err_str
+                ):
+                    if "chat_session" in st.session_state:
+                        del st.session_state["chat_session"]
+                    break
+                else:
+                    raise e
+            except Exception as e:
+                last_err = e
+                break
+    raise Exception(f"連線失敗，請確認 API Key 是否有效。詳細：{last_err}")
 
-  input_method = st.radio(
-      "請選擇數據提供方式：",
-      ["上傳 CSV 檔案", "手動輸入/貼上數據 (R 向量或 CSV)"],
-      horizontal=True,
-  )
+# ==========================================
+# 4. 主流程區塊：資料輸入
+# ==========================================
+st.markdown("---")
+st.subheader("📊 步驟 2：提供實作數據")
 
-  initial_data_prompt = ""
-  has_input = False
+input_method = st.radio(
+    "請選擇數據提供方式：",
+    ["上傳 CSV 檔案", "手動輸入/貼上數據 (R 向量或 CSV)"],
+    horizontal=True,
+)
 
-  if input_method == "上傳 CSV 檔案":
-      uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
-      if uploaded_file:
+initial_data_prompt = ""
+has_input = False
+
+if input_method == "上傳 CSV 檔案":
+    uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+    if uploaded_file:
         df = pd.read_csv(uploaded_file)
         df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
         
@@ -164,126 +157,159 @@ else:
             "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
         )
         has_input = True
-    else:
-      raw_text = st.text_area(
-          "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
-          height=100,
-          placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
-      )
-  if raw_text.strip():
-    initial_data_prompt = (
-        f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
-        "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在開頭包含這段變數宣告，確保程式碼可獨立執行！"
+else:
+    raw_text = st.text_area(
+        "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
+        height=100,
+        placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
     )
-    has_input = True
+    if raw_text.strip():
+        initial_data_prompt = (
+            f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
+            "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在開頭包含這段變數宣告，確保程式碼可獨立執行！"
+        )
+        has_input = True
 
 if has_input:
-  if "gemini_client" not in st.session_state:
-    st.session_state.gemini_client = genai.Client(api_key=api_key)
+    if "gemini_client" not in st.session_state:
+        st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-  # 🌟 重新設計的 System Prompt，強制 AI 展開教學細節
-  sys_instruct = """
-      你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
-      你的任務是引導學生完成無母數統計學習。課程包含三大概念，但【實作核心與預設重點是 Nadaraya-Watson (NW) 核迴歸】。絕對禁止使用 LOESS。
+    sys_instruct = """
+    你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
+    你的任務是引導學生完成無母數統計學習。課程包含三大概念，但【實作核心與預設重點是 Nadaraya-Watson (NW) 核迴歸】。絕對禁止使用 LOESS。
 
-      【嚴格的兩階段互動規則】：
-      你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
+    【嚴格的兩階段互動規則】：
+    你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
 
-      === 狀態一：當學生剛提供數據時 ===
-      你的任務是【進行詳細的理論教學與推薦】，請務必「列點完整說明」，不要省略教學內容！做完才能停下問選擇：
-      1. 成功提示：開頭先說「成功讀取資料！」，並簡述資料筆數與變數。
-      2. 概念教學：簡單提及無母數包含等級相關與KDE，但宣告「我們今天的重點實作是 Nadaraya-Watson 核迴歸」。
-      3. 【詳述】Kernel 種類：必須詳細解說 Gaussian Kernel (平滑度高) 與 Epanechnikov Kernel (漸進最佳性) 的差異。
-      4. 【詳述】Bandwidth (h) 原理：必須詳細解說 Bias-Variance Tradeoff (h 太小過擬合；h 太大過平滑)。並比較 nrd0 (經驗法則) 與 SJ (資料驅動，適合非常態) 的優缺點。
-      5. AI 專業推薦：明確推薦一個適合這份數據的 Kernel 與 Bandwidth (h) 設定，並說明統計上的理由。
-      6. 提問並暫停：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我會為你執行 NW 迴歸分析與繪圖。」
-      ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。
+    === 狀態一：當學生剛提供數據時 ===
+    你的任務是【進行詳細的理論教學並提供多個選項】，請務必「列點完整說明」，做完才能停下問選擇：
+    1. 成功提示：開頭先說「成功讀取資料！」，並簡述資料筆數與變數。
+    2. 概念教學：簡單提及無母數包含等級相關與KDE，宣告「我們今天的重點實作是 Nadaraya-Watson 核迴歸」。
+    3. 【提供多種 Kernel 選項】：向學生介紹 Gaussian, Epanechnikov, Rectangular 核函數的差異。
+    4. 【提供多種 Bandwidth 選項】：詳細解說 Bias-Variance Tradeoff。比較 nrd0, SJ 以及自訂極端 h 數值會如何影響平滑度。
+    5. 【引導使用介面】：文末必須說：「請利用下方的【🎛️ 參數選擇區】挑選你想要嘗試的組合，點擊按鈕後我將為你輸出 NW 迴歸報告與圖表！若有不懂之處也可在對話框發問。」
+    ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。
 
-      === 狀態二：當學生明確回覆選擇後 ===
-      你的任務是【執行計算與畫圖】。
-      1. 確認學生的參數。
-      2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
-      3. 輸出完整的 R 繪圖程式碼 (```r ... ```) 繪製 NW 迴歸曲線。
-      ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】。
-      4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文。
-      
-      ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二，直接給出專業說明與程式碼。不准講「無使用 LOESS」、「防亂碼處理」、「遵守指令」等邀功廢話。
-      """
+    === 狀態二：當學生透過按鈕回覆選擇後 ===
+    你的任務是【執行計算與畫圖】。
+    1. 確認學生挑選的參數。
+    2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
+    3. 輸出完整的 R 繪圖程式碼 (```r ... ```) 繪製 NW 迴歸曲線。
+    ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】。若使用非 Gaussian/Box Kernel，請在 Base R 中自定義核函數計算，勿使用外部套件。
+    4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文。
+    
+    ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二，直接給出專業說明與程式碼。不准講「無使用 LOESS」、「防亂碼處理」、「遵守指令」等邀功廢話。
+    """
 
-  config = types.GenerateContentConfig(
-      system_instruction=sys_instruct, temperature=0.0
-  )
-
-  if "chat_session" not in st.session_state:
-    # 🌟 在觸發詞中再次強調不能跳過原理說明
-    prompt_to_send = (
-        f"{initial_data_prompt}\n\n"
-        "請執行『狀態一』：\n"
-        "1. 宣告成功讀取資料\n"
-        "2. 【務必詳細解說】Kernel 的差異與 Bandwidth 的 Bias-Variance Tradeoff (不准略過教學)\n"
-        "3. 給出你的推薦\n"
-        "4. 停下來問我的選擇。\n"
-        "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】繪圖。"
-    )
-    with st.spinner("Agent 分析數據並準備詳細教學內容中..."):
-      try:
-        response = send_msg_smart(prompt_to_send, config)
-        st.session_state.messages = [
-            {"role": "assistant", "content": response.text}
-        ]
-      except Exception as e:
-        st.error(f"連線失敗：{e}")
-        st.stop()
-
-  st.markdown("---")
-  st.subheader("💬 步驟 3：對話實作區")
-
-  for msg in st.session_state.get("messages", []):
-    with st.chat_message(msg["role"]):
-      st.markdown(msg["content"])
-      if "img_path" in msg:
-        st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
-
-  if user_input := st.chat_input(
-      "回覆你的選擇 (例如：我選擇 Gaussian Kernel 與 SJ 頻寬，請進行 NW 迴歸...)"
-  ):
-    with st.chat_message("user"):
-      st.markdown(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
-    trigger_stage_2_prompt = (
-        f"{user_input}\n\n"
-        "[系統提示：學生已做出選擇，現在正式進入『狀態二』。請輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
+    config = types.GenerateContentConfig(
+        system_instruction=sys_instruct, temperature=0.0
     )
 
-    with st.chat_message("assistant"):
-      with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
-        try:
-          response = send_msg_smart(trigger_stage_2_prompt, config)
-          response_text = response.text
-          st.markdown(response_text)
+    # 觸發狀態一教學
+    if "chat_session" not in st.session_state:
+        prompt_to_send = (
+            f"{initial_data_prompt}\n\n"
+            "請執行『狀態一』：\n"
+            "1. 宣告成功讀取資料\n"
+            "2. 【務必詳細列出多個 Kernel 與多個 Bandwidth 選項教學】\n"
+            "3. 停下來請我用下方的面板作選擇。\n"
+            "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】繪圖。"
+        )
+        with st.spinner("Agent 分析數據並準備詳細教學內容與選項中..."):
+            try:
+                response = send_msg_smart(prompt_to_send, config)
+                st.session_state.messages = [
+                    {"role": "assistant", "content": response.text}
+                ]
+            except Exception as e:
+                st.error(f"連線失敗：{e}")
+                st.stop()
 
-          msg_data = {"role": "assistant", "content": response_text}
+    st.markdown("---")
+    st.subheader("💬 步驟 3：Agent 教學與互動區")
 
-          r_code_match = re.search(
-              r"```r\n(.*?)```", response_text, re.DOTALL
-          )
-          if r_code_match:
-            r_code = r_code_match.group(1)
-            if any(
-                kw in r_code
-                for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
-            ):
-              img_path, err = execute_r_code_and_get_image(r_code)
-              if img_path:
-                st.image(
-                    img_path, caption="R 語言 Nadaraya-Watson 繪圖結果"
-                )
-                msg_data["img_path"] = img_path
-              elif err:
-                st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
+    # 渲染歷史對話與圖表
+    for msg in st.session_state.get("messages", []):
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if "img_path" in msg:
+                st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-          st.session_state.messages.append(msg_data)
+    st.markdown("---")
+    st.subheader("🎛️ 步驟 4：參數選擇區 (請依據上方教學選擇)")
+    
+    # UI 選單設計
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_kernel = st.selectbox(
+            "1️⃣ 選擇 Kernel 核函數", 
+            ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
+        )
+    with col2:
+        bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
+        if bw_mode == "使用演算法":
+            selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
+            final_bw = selected_bw.split(" ")[0] # 取出 SJ, nrd0 等簡稱
+        else:
+            final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
 
-        except Exception as e:
-          st.error(f"發生錯誤：{e}")
+    # 一鍵觸發 NW 迴歸的按鈕
+    if st.button("🚀 確認參數，執行 NW 核迴歸繪圖！", type="primary", use_container_width=True):
+        clean_kernel = selected_kernel.split(" ")[0]
+        trigger_stage_2_prompt = (
+            f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
+            "[系統提示：學生已透過 UI 做出選擇，現在正式進入『狀態二』。請針對此選擇輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
+        )
+        
+        # 顯示使用者的選擇
+        st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！"})
+        
+        with st.chat_message("user"):
+            st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
+
+        with st.chat_message("assistant"):
+            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
+                try:
+                    response = send_msg_smart(trigger_stage_2_prompt, config)
+                    response_text = response.text
+                    st.markdown(response_text)
+
+                    msg_data = {"role": "assistant", "content": response_text}
+
+                    r_code_match = re.search(
+                        r"```r\n(.*?)```", response_text, re.DOTALL
+                    )
+                    if r_code_match:
+                        r_code = r_code_match.group(1)
+                        if any(
+                            kw in r_code
+                            for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
+                        ):
+                            img_path, err = execute_r_code_and_get_image(r_code)
+                            if img_path:
+                                st.image(
+                                    img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
+                                )
+                                msg_data["img_path"] = img_path
+                            elif err:
+                                st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
+
+                    st.session_state.messages.append(msg_data)
+                except Exception as e:
+                    st.error(f"發生錯誤：{e}")
+
+    # 保留一般聊天框，讓學生可以自由問問題
+    if user_input := st.chat_input("對剛才的理論有疑問嗎？可以在此自由向 Agent 發問..."):
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        
+        with st.chat_message("assistant"):
+            with st.spinner("Agent 回覆中..."):
+                try:
+                    response = send_msg_smart(user_input, config)
+                    response_text = response.text
+                    st.markdown(response_text)
+                    st.session_state.messages.append({"role": "assistant", "content": response_text})
+                except Exception as e:
+                    st.error(f"發生錯誤：{e}")
