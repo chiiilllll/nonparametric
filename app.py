@@ -164,12 +164,12 @@ else:
             "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
         )
         has_input = True
-else:
-  raw_text = st.text_area(
-      "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
-      height=100,
-      placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
-  )
+    else:
+      raw_text = st.text_area(
+          "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
+          height=100,
+          placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
+      )
   if raw_text.strip():
     initial_data_prompt = (
         f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
