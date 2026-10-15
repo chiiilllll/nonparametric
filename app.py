@@ -143,27 +143,27 @@ else:
 
   if input_method == "上傳 CSV 檔案":
       uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
-  if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
-    
-    st.success("資料讀取成功！")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("預覽資料：")
-        st.dataframe(df.head(5))
-    with col2:
-        st.write("敘述性統計：")
-        st.dataframe(df.describe())
-    
-    preview_csv = df.head(5).to_csv(index=False)
-    total_rows = len(df)
-    
-    initial_data_prompt = (
-        f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
-        "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
-    )
-    has_input = True
+      if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
+        
+        st.success("資料讀取成功！")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("預覽資料：")
+            st.dataframe(df.head(5))
+        with col2:
+            st.write("敘述性統計：")
+            st.dataframe(df.describe())
+        
+        preview_csv = df.head(5).to_csv(index=False)
+        total_rows = len(df)
+        
+        initial_data_prompt = (
+            f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
+            "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
+        )
+        has_input = True
 else:
   raw_text = st.text_area(
       "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
