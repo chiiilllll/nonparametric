@@ -142,157 +142,148 @@ else:
   has_input = False
 
   if input_method == "上傳 CSV 檔案":
-    uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+  uploaded_file = st.file_uploader("上傳 CSV 檔案", type=["csv"])
+  if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
     
-    # 必須確認檔案真的傳上來了，才能進行讀取與顯示
-    if uploaded_file:
-      df = pd.read_csv(uploaded_file)
-      df.to_csv("uploaded_data.csv", index=False, encoding="utf-8-sig")
-      
-      # 💡 檔案存好且 df 建立後，馬上在這裡顯示預覽與 EDA
-      st.success("資料讀取成功！")
-      col1, col2 = st.columns(2)
-      with col1:
-          st.write("預覽資料：")
-          st.dataframe(df.head(5))
-      with col2:
-          st.write("敘述性統計：")
-          st.dataframe(df.describe())
-          
-      # 接著組合給 AI 看的 Prompt
-      preview_csv = df.head(5).to_csv(index=False)
-      total_rows = len(df)
-      
-      initial_data_prompt = (
-          f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
-          "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保你的變數名稱與資料欄位一致！"
-      )
-      has_input = True
-      
-  else:
-    raw_text = st.text_area(
-        "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
-        height=100,
-        placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
+    st.success("資料讀取成功！")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("預覽資料：")
+        st.dataframe(df.head(5))
+    with col2:
+        st.write("敘述性統計：")
+        st.dataframe(df.describe())
+    
+    preview_csv = df.head(5).to_csv(index=False)
+    total_rows = len(df)
+    
+    initial_data_prompt = (
+        f"這是我上傳的 CSV 數據預覽（前 5 筆）：\n\n{preview_csv}\n\n這份數據總共有 {total_rows} 筆。\n"
+        "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必使用 `df <- read.csv('uploaded_data.csv')` 來讀取資料，並確保變數名稱與欄位一致！"
     )
-    if raw_text.strip():
-      initial_data_prompt = (
-          f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
-          "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在程式碼開頭包含這段變數宣告，確保程式碼可獨立執行！"
-      )
-      has_input = True
+    has_input = True
+else:
+  raw_text = st.text_area(
+      "請貼上數據 (例如：X <- c(85, 60, 92, 75, 65); Y <- c(12, 20, 5, 18, 15))：",
+      height=100,
+      placeholder="X <- c(85, 60, 92, 75, 65)\nY <- c(12, 20, 5, 18, 15)",
+  )
+  if raw_text.strip():
+    initial_data_prompt = (
+        f"這是使用者輸入的實作數據：\n\n{raw_text.strip()}\n\n"
+        "【強制規範】：稍後在狀態二輸出 R 程式碼時，請務必在開頭包含這段變數宣告，確保程式碼可獨立執行！"
+    )
+    has_input = True
 
-  if has_input:
-    if "gemini_client" not in st.session_state:
-      st.session_state.gemini_client = genai.Client(api_key=api_key)
+if has_input:
+  if "gemini_client" not in st.session_state:
+    st.session_state.gemini_client = genai.Client(api_key=api_key)
 
-    sys_instruct = """
-        你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
-        你的任務是引導學生完成無母數統計學習，重點深耕【Nadaraya-Watson (NW) 核迴歸】實作，絕對禁止使用 LOESS。
+  # 🌟 重新設計的 System Prompt，強制 AI 展開教學細節
+  sys_instruct = """
+      你是一位嚴謹且精通無母數統計學與 R 語言的標準教學助教 (TA)。
+      你的任務是引導學生完成無母數統計學習。課程包含三大概念，但【實作核心與預設重點是 Nadaraya-Watson (NW) 核迴歸】。絕對禁止使用 LOESS。
 
-        【嚴格的兩階段互動規則】：
-        你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
+      【嚴格的兩階段互動規則】：
+      你必須嚴格遵守以下對話狀態，絕不能提前偷跑！
 
-        === 狀態一：當學生剛提供數據時 ===
-        你的任務【只有說明與推薦】，做完必須立刻停下！
-        1. 成功提示與資料簡述：開頭先宣告「成功讀取資料！」，並簡單描述讀取到的資料筆數與變數資訊。
-        2. 簡述三大概念：等級相關 (Spearman/Kendall)、KDE 密度估計與 NW 核迴歸。
-        3. 【提供多元 Kernel 選項與原理】：向學生介紹以下幾種常見的核函數：
-           - Gaussian (高斯核)：平滑度最高，實務上最常用。
-           - Epanechnikov：在均方整合誤差 (MISE) 理論下漸進最佳 (Asymptotic Efficiency)。
-           - Rectangular / Uniform (均勻核)：權重皆相等，擬合曲線會呈階梯狀，適合觀察極端權重。
-           - Triangular (三角核) 或 Biweight (雙權核)：權重遞減速度不同於高斯核的選擇。
-        4. 【提供多元 Bandwidth (h) 選項與原理】：說明 Bias-Variance Tradeoff，並比較以下演算法：
-           - nrd0 (Silverman) / nrd (Scott)：經驗法則，計算極快，但在雙峰或非常態資料易過度平滑。
-           - SJ (Sheather-Jones)：Plug-in 法，目前學術界最推薦，適應性佳。
-           - ucv (Unbiased CV) / bcv (Biased CV)：交叉驗證法，資料驅動，但小樣本下變異較大。
-        5. 【AI 專業推薦】：根據學生的數據特徵，明確推薦「一個 Kernel + 一個 Bandwidth 方法」，並說明背後統計理由。
-        6. 【提問並暫停】：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我才會為你執行迴歸分析與繪圖。」
-        ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。如果你偷跑，學生將無法學習。
+      === 狀態一：當學生剛提供數據時 ===
+      你的任務是【進行詳細的理論教學與推薦】，請務必「列點完整說明」，不要省略教學內容！做完才能停下問選擇：
+      1. 成功提示：開頭先說「成功讀取資料！」，並簡述資料筆數與變數。
+      2. 概念教學：簡單提及無母數包含等級相關與KDE，但宣告「我們今天的重點實作是 Nadaraya-Watson 核迴歸」。
+      3. 【詳述】Kernel 種類：必須詳細解說 Gaussian Kernel (平滑度高) 與 Epanechnikov Kernel (漸進最佳性) 的差異。
+      4. 【詳述】Bandwidth (h) 原理：必須詳細解說 Bias-Variance Tradeoff (h 太小過擬合；h 太大過平滑)。並比較 nrd0 (經驗法則) 與 SJ (資料驅動，適合非常態) 的優缺點。
+      5. AI 專業推薦：明確推薦一個適合這份數據的 Kernel 與 Bandwidth (h) 設定，並說明統計上的理由。
+      6. 提問並暫停：文末必須問：「請回覆你決定採用的 Kernel 與 Bandwidth，接著我會為你執行 NW 迴歸分析與繪圖。」
+      ⚠️ 致命禁忌：在狀態一，【絕對禁止】輸出任何 R 程式碼 (```r ... ```)，絕對禁止進行實作與繪圖。
 
-        === 狀態二：當學生明確回覆了他選擇的 Kernel 與 Bandwidth 後 ===
-        你的任務是【執行計算與畫圖】。
-        1. 確認學生的參數。
-        2. 列出 NW 迴歸公式，特別提醒學生注意在資料端點處的「邊界偏差 (Boundary Bias)」。
-        3. 輸出完整的 R 繪圖程式碼 (```r ... ```)。
-        ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】，不能假設資料已存在。
-        4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文（防止亂碼）。
-        
-        ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二輸出結果時，直接給出專業的說明、公式與程式碼即可。絕對不准向使用者解釋你如何遵守系統設定（例如：絕對不要講「完全無偷跑套件」、「無使用 LOESS」、「圖表已純 ASCII 化」等廢話）。保持教學語言的專業與簡潔。
-        """
+      === 狀態二：當學生明確回覆選擇後 ===
+      你的任務是【執行計算與畫圖】。
+      1. 確認學生的參數。
+      2. 列出 NW 迴歸公式，提醒邊界偏差 (Boundary Bias)。
+      3. 輸出完整的 R 繪圖程式碼 (```r ... ```) 繪製 NW 迴歸曲線。
+      ⚠️ 確保可執行：你的 R 程式碼【必須自行宣告變數 X, Y】或【使用 read.csv 讀取資料】。
+      4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文。
+      
+      ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二，直接給出專業說明與程式碼。不准講「無使用 LOESS」、「防亂碼處理」、「遵守指令」等邀功廢話。
+      """
 
-    config = types.GenerateContentConfig(
-        system_instruction=sys_instruct, temperature=0.0
+  config = types.GenerateContentConfig(
+      system_instruction=sys_instruct, temperature=0.0
+  )
+
+  if "chat_session" not in st.session_state:
+    # 🌟 在觸發詞中再次強調不能跳過原理說明
+    prompt_to_send = (
+        f"{initial_data_prompt}\n\n"
+        "請執行『狀態一』：\n"
+        "1. 宣告成功讀取資料\n"
+        "2. 【務必詳細解說】Kernel 的差異與 Bandwidth 的 Bias-Variance Tradeoff (不准略過教學)\n"
+        "3. 給出你的推薦\n"
+        "4. 停下來問我的選擇。\n"
+        "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】繪圖。"
+    )
+    with st.spinner("Agent 分析數據並準備詳細教學內容中..."):
+      try:
+        response = send_msg_smart(prompt_to_send, config)
+        st.session_state.messages = [
+            {"role": "assistant", "content": response.text}
+        ]
+      except Exception as e:
+        st.error(f"連線失敗：{e}")
+        st.stop()
+
+  st.markdown("---")
+  st.subheader("💬 步驟 3：對話實作區")
+
+  for msg in st.session_state.get("messages", []):
+    with st.chat_message(msg["role"]):
+      st.markdown(msg["content"])
+      if "img_path" in msg:
+        st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
+
+  if user_input := st.chat_input(
+      "回覆你的選擇 (例如：我選擇 Gaussian Kernel 與 SJ 頻寬，請進行 NW 迴歸...)"
+  ):
+    with st.chat_message("user"):
+      st.markdown(user_input)
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    trigger_stage_2_prompt = (
+        f"{user_input}\n\n"
+        "[系統提示：學生已做出選擇，現在正式進入『狀態二』。請輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
     )
 
-    if "chat_session" not in st.session_state:
-      prompt_to_send = (
-          f"{initial_data_prompt}\n\n"
-          "請執行『狀態一』：開頭先宣告成功讀取資料並簡述，接著說明概念、原理並給出你的推薦。\n"
-          "⚠️ 警告：現在還在狀態一，【絕對禁止】輸出任何 R 語言程式碼，也【不准】繪圖，只要停下來問我的選擇即可。"
-      )
-      with st.spinner("Agent 分析數據並準備教學引導中..."):
+    with st.chat_message("assistant"):
+      with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
         try:
-          response = send_msg_smart(prompt_to_send, config)
-          st.session_state.messages = [
-              {"role": "assistant", "content": response.text}
-          ]
+          response = send_msg_smart(trigger_stage_2_prompt, config)
+          response_text = response.text
+          st.markdown(response_text)
+
+          msg_data = {"role": "assistant", "content": response_text}
+
+          r_code_match = re.search(
+              r"```r\n(.*?)```", response_text, re.DOTALL
+          )
+          if r_code_match:
+            r_code = r_code_match.group(1)
+            if any(
+                kw in r_code
+                for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
+            ):
+              img_path, err = execute_r_code_and_get_image(r_code)
+              if img_path:
+                st.image(
+                    img_path, caption="R 語言 Nadaraya-Watson 繪圖結果"
+                )
+                msg_data["img_path"] = img_path
+              elif err:
+                st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
+
+          st.session_state.messages.append(msg_data)
+
         except Exception as e:
-          st.error(f"連線失敗：{e}")
-          st.stop()
-
-    st.markdown("---")
-    st.subheader("💬 步驟 3：對話實作區")
-
-    for msg in st.session_state.get("messages", []):
-      with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "img_path" in msg:
-          st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
-
-    if user_input := st.chat_input(
-        "回覆你的選擇 (例如：我選擇 Gaussian Kernel 與 SJ 頻寬，請進行 NW"
-        " 迴歸...)"
-    ):
-      with st.chat_message("user"):
-        st.markdown(user_input)
-      st.session_state.messages.append({"role": "user", "content": user_input})
-
-      trigger_stage_2_prompt = (
-          f"{user_input}\n\n"
-          "[系統提示：學生已做出選擇，現在正式進入『狀態二』。請輸出 NW"
-          " 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)，務必確保 R 程式碼本身包含資料宣告或讀取，以免執行失敗！\n"
-          "⚠️ 再次警告：直接給出專業的推論與程式碼，嚴禁輸出「遵守無 LOESS 規定」、「採用 ASCII 標籤防亂碼」等邀功廢話！]"
-      )
-
-      with st.chat_message("assistant"):
-        with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
-          try:
-            response = send_msg_smart(trigger_stage_2_prompt, config)
-            response_text = response.text
-            st.markdown(response_text)
-
-            msg_data = {"role": "assistant", "content": response_text}
-
-            r_code_match = re.search(
-                r"```r\n(.*?)```", response_text, re.DOTALL
-            )
-            if r_code_match:
-              r_code = r_code_match.group(1)
-              if any(
-                  kw in r_code
-                  for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
-              ):
-                img_path, err = execute_r_code_and_get_image(r_code)
-                if img_path:
-                  st.image(
-                      img_path, caption="R 語言 Nadaraya-Watson 繪圖結果"
-                  )
-                  msg_data["img_path"] = img_path
-                elif err:
-                  st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
-
-            st.session_state.messages.append(msg_data)
-
-          except Exception as e:
-            st.error(f"發生錯誤：{e}")
+          st.error(f"發生錯誤：{e}")
