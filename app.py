@@ -310,7 +310,10 @@ if has_input:
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
-    if user_input := st.chat_input("對剛才的理論有疑問嗎？可以在此自由向 Agent 發問..."):
+    # ==========================================
+    # 💬 底部自由對話區 (讓 AI 用自己的專業腦袋回答問題)
+    # ==========================================
+    if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
@@ -318,6 +321,7 @@ if has_input:
         with st.chat_message("assistant"):
             with st.spinner("Agent 回覆中..."):
                 try:
+                    # 直接將使用者的提問送給 AI，由 AI 發揮它的統計專業來解答
                     response = send_msg_smart(user_input, config)
                     response_text = response.text
                     st.markdown(response_text)
