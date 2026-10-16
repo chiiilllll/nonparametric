@@ -13,9 +13,11 @@ import subprocess
 import time
 import pandas as pd
 import streamlit as st
+import base64
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
+
 
 st.set_page_config(page_title="無母數統計教學與實作 Agent", layout="wide")
 
@@ -323,6 +325,15 @@ if has_input:
                             elif err:
                                 st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
 
+                            
+                            # 🌟 新增：把圖片轉成 Base64 格式，才能完美嵌進 Markdown 報告中
+                            def get_image_base64(image_path):
+                                if os.path.exists(image_path):
+                                    with open(image_path, "rb") as img_file:
+                                        return base64.b64encode(img_file.read()).decode("utf-8")
+                                return ""
+
+
                     st.session_state.messages.append(msg_data)
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
@@ -334,37 +345,43 @@ if has_input:
         if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
             # 👇 就是這裡！從這裡開始必須往內縮排
             clean_kernel = selected_kernel.split(" ")[0]
-            with st.spinner("Agent 正在彙整真實資料與實作結果為報告中..."):
-                
-                # 🌟 關鍵修復：把真實資料、選定的 Kernel、Bandwidth 和預測 X 全部綁進去！
-                report_prompt = (
-                    f"{st.session_state.raw_data_instruction}\n"
-                    f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
-                    "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
-                    "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
-                    "```markdown\n"
-                    "# 無母數迴歸分析實驗報告\n\n"
-                    "## 1. 實驗目的與概念\n"
-                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
-                    "## 2. 數據摘要\n"
-                    "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
-                    "## 3. 超參數決策\n"
-                    "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
-                    "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
-                    "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
-                    "## 4. 數學原理與邊界偏差\n"
-                    "NW 迴歸的估計式為：\n"
-                    "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
-                    "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
-                    "## 5. R 語言實作關鍵程式碼\n"
-                    "```r\n"
-                    "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
-                    "```\n\n"
-                    "## 6. 結論與預測\n"
-                    "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
-                    "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
-                    "```\n"
-                )
+            with st.spinner("Agent 正在彙整真實資料與實作圖表為報告中..."):
+            
+            # 🌟 取得畫面上那張圖片的 Base64 編碼
+            img_base64_str = get_image_base64("output_plot.png")
+            img_markdown_tag = f"![NW Regression Plot](data:image/png;base64,{img_base64_str})" if img_base64_str else "[圖表生成中]"
+
+            report_prompt = (
+                f"{st.session_state.raw_data_instruction}\n"
+                f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
+                "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
+                "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
+                "```markdown\n"
+                "# 無母數迴歸分析實驗報告\n\n"
+                "## 1. 實驗目的與概念\n"
+                "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
+                "## 2. 數據摘要\n"
+                "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
+                "## 3. 超參數決策\n"
+                "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
+                "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
+                "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
+                "## 4. 數學原理與邊界偏差\n"
+                "NW 迴歸的估計式為：\n"
+                "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
+                "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
+                "## 5. R 語言實作與視覺化結果\n"
+                "**關鍵程式碼**：\n"
+                "```r\n"
+                "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
+                "```\n\n"
+                "**執行結果圖表**：\n"
+                f"{img_markdown_tag}\n\n"
+                "## 6. 結論與預測\n"
+                "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
+                "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
+                "```\n"
+            )
                 try:
                     rep_res = send_msg_smart(report_prompt, config)
                     # 清除可能多餘的 Markdown code block 標記，確保排版乾淨
@@ -386,22 +403,22 @@ if has_input:
                 type="primary"
             )
 
-    # 🌟 功能二：自由問答區 (加入當前參數狀態，防止 AI 跳針要你重選)
+    # 🌟 功能二：自由問答區 (修改回答方式：禁止給程式碼，直接給計算數值與答案)
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # 取得當前 UI 面板上的狀態
         current_kernel = selected_kernel.split(" ")[0]
         
-        # 📌 關鍵修復：偷偷告訴 AI 目前的參數，並下達「絕對不要再叫學生選」的死命令
+        # 📌 關鍵修改：嚴格規定自由問答「絕對不准給 R 程式碼」，必須直接給出數值與觀念解答
         qa_prompt = (
             f"學生提問：{user_input}\n\n"
             f"[系統強制提示：\n"
             f"1. 學生目前已經在面板選擇了【{current_kernel} Kernel】與【Bandwidth = {final_bw}】。\n"
-            f"2. 我們已經進入『自由問答階段』。請直接針對學生的問題進行解答，【絕對不要】再叫學生重新選擇 Kernel 或 Bandwidth！\n"
-            f"3. 若學生的問題需要進行預測、計算或寫 R 程式碼，絕對不准自己編造假資料，必須嚴格遵守以下真實資料設定來進行計算：\n{st.session_state.raw_data_instruction}]"
+            f"2. 這是『自由問答階段』。請直接針對學生的問題進行解答，【絕對不要】再叫學生重新選擇 Kernel 或 Bandwidth！\n"
+            f"3. ⚠️【絕對禁忌】：在自由問答中，【絕對禁止】輸出任何 R 程式碼 (```r ... ```) 或教導學生怎麼寫程式碼。若學生詢問預測值（例如給定 X 求 Y）或計算問題，請直接在文字中算出並【直接給出精準數值】！\n"
+            f"4. 進行計算與回答時，絕對不准自己編造假資料，必須嚴格遵守以下真實資料設定：\n{st.session_state.raw_data_instruction}]"
         )
         
         with st.chat_message("assistant"):
