@@ -13,11 +13,9 @@ import subprocess
 import time
 import pandas as pd
 import streamlit as st
-import base64
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError, ServerError
-
 
 st.set_page_config(page_title="無母數統計教學與實作 Agent", layout="wide")
 
@@ -30,14 +28,6 @@ st.markdown(
 # 1. 頂層初始化 Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
-# 🌟 新增：記錄匯出報告內容的變數
-if "report_content" not in st.session_state:
-    st.session_state.report_content = ""
-
-# 🌟 新增：追蹤步驟流程，確保報告按鈕不會提早跑出來
-if "nw_executed" not in st.session_state:
-    st.session_state.nw_executed = False
 
 # ==========================================
 # 🔑 步驟 1：強制使用者輸入 API Key
@@ -67,99 +57,33 @@ MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash", 
 # ==========================================
 # 2. R 語言繪圖執行引擎
 # ==========================================
-def execute_r_code_and_get_image(r_code, predict_x=None):
-    # 🌟 使用毫秒時間戳記產生獨一無二的圖片檔名，防止歷史圖片被覆蓋
-    unique_id = int(time.time() * 1000)
-    plot_filename = f"plot_{unique_id}.png"
-
-    # 🌟 透過 R 語言的數學公式與當前頻寬、核函數，精準計算給定 X 的預測值 Y
-    prediction_script = ""
-    if predict_x is not None:
-        prediction_script = f"""
-        tryCatch({{
-            x0 <- {predict_x}
-            if (!exists("h")) {{
-                if (exists("bw")) {{ h <- bw }} else {{ h <- sd(X)/4 }}
-            }}
-            
-            # 定義各類 Kernel 權重函數
-            k_func <- function(u) {{
-                k_type <- "{selected_kernel}"
-                if (grepl("Gaussian", k_type, ignore.case=TRUE)) {{
-                    return(dnorm(u))
-                }} else if (grepl("Epanechnikov", k_type, ignore.case=TRUE)) {{
-                    return(ifelse(abs(u) <= 1, 0.75 * (1 - u^2), 0))
-                }} else if (grepl("Rectangular", k_type, ignore.case=TRUE)) {{
-                    return(ifelse(abs(u) <= 1, 0.5, 0))
-                }} else if (grepl("Triangular", k_type, ignore.case=TRUE)) {{
-                    return(ifelse(abs(u) <= 1, 1 - abs(u), 0))
-                }} else {{
-                    return(dnorm(u))
-                }}
-            }}
-            
-            u <- (X - x0) / h
-            weights <- k_func(u)
-            if (sum(weights) > 0) {{
-                pred_y <- sum(weights * Y) / sum(weights)
-                cat(paste0("R_PRED_VAL:", pred_y))
-            }}
-            # 計算預測值
-            res_ks <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = x0)
-            pred_y <- res_ks$y
-            
-            if (!is.na(pred_y)) {{
-                cat(paste0("R_PRED_VAL:", pred_y))
-                # 🌟 自動在圖表上標註預測點與文字標籤
-                points(x0, pred_y, col = "red", pch = 19, cex = 1.5)
-                text(x0, pred_y, labels = sprintf("Pred at X=%.1f (Y=%.2f)", x0, pred_y), pos = 3, col = "red", font = 2)
-                
-                tryCatch({{
-                    legend("topright", legend = c("Data points", "NW Estimate (SJ)", sprintf("Prediction at X=%.1f (Y=%.2f)", x0, pred_y)), 
-                           col = c("black", "blue", "red"), lty = c(NA, 1, NA), pch = c(1, NA, 19), bty = "n")
-                }}, error = function(e2) {{}})
-            }}
-        }}, error = function(e) {{}} )
-        """
+def execute_r_code_and_get_image(r_code):
+    plot_filename = "output_plot.png"
+    if os.path.exists(plot_filename):
+        os.remove(plot_filename)
 
     wrapped_r_script = f"""
     options(warn=-1)
     png('{plot_filename}', width=800, height=550, res=110)
-    set.seed(42)
+    set.seed(42) # 固定隨機種子
     {r_code}
-    {prediction_script}
     dev.off()
     """
 
     with open("temp_script.R", "w", encoding="utf-8") as f:
         f.write(wrapped_r_script)
 
-    predicted_y_from_r = None
     try:
         result = subprocess.run(
             ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
         )
-        
-        if result.stdout and "R_PRED_VAL:" in result.stdout:
-            for line in result.stdout.split("\n"):
-                if "R_PRED_VAL:" in line:
-                    predicted_y_from_r = line.split("R_PRED_VAL:")[1].strip()
-
         if os.path.exists(plot_filename):
-            # 🌟 複製一份永久圖檔，供 Markdown 報告隨時抓取 Base64
-            import shutil
-            shutil.copy(plot_filename, "permanent_plot.png")
-            return plot_filename, None, predicted_y_from_r
+            return plot_filename, None
         else:
-            return None, result.stderr, None
+            return None, result.stderr
     except Exception as e:
-        return None, str(e), None
+        return None, str(e)
 
-def get_image_base64(image_path):
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode("utf-8")
-    return ""
 # ==========================================
 # 3. 智能連線發送函式
 # ==========================================
@@ -285,13 +209,6 @@ if has_input:
     4. 程式碼必須包含 `set.seed(42)`，且繪圖標籤 (main, xlab, ylab, legend) 必須全為純 ASCII 英文。
     
     ⛔ 【嚴禁冗言贅字 (重要禁忌)】：在狀態二，直接給出專業說明與程式碼。不准講「無使用 LOESS」、「防亂碼處理」、「遵守指令」等邀功廢話。
-
-    === 💬 自由問答階段的最高鐵律 (極度重要) ===
-    當學生在下方對話框提問時：
-    1. **絕對禁止講廢話**：不准說「沒問題」、「很高興為您解答」、「這是一個好問題」等任何客套話。
-    2. **直接給答案**：必須完全根據學生上傳的真實資料、以及目前面板上選定的 Kernel 與 Bandwidth，【直接切入重點回答】。
-    3. **禁止輸出 R 程式碼**：絕對不准提供任何 ````r` 程式碼或教導語法。
-    4. **精準計算**：若涉及預測或統計值計算，請直接給出數字與極簡的觀念解釋。
     """
 
     config = types.GenerateContentConfig(
@@ -321,134 +238,89 @@ if has_input:
     st.markdown("---")
     st.subheader("💬 步驟 3：Agent 教學與互動區")
 
-    # 確保步驟 3 的歷史對話與圖表一定會被完整印在畫面上
+    # 渲染歷史對話與圖表
     for msg in st.session_state.get("messages", []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if "img_path" in msg:
                 st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    # ==========================================
-    # 🎛️ 步驟 4：參數選擇區 (嚴格規定：必須等步驟 3 有對話內容後才能出現)
-    # ==========================================
-    if len(st.session_state.get("messages", [])) > 0:
-        st.markdown("---")
-        is_expanded = not st.session_state.get("nw_executed", False)
-        
-        # 🌟 這裡加上 with expander，並確保底下的所有元件都向內縮排一層！
-        with st.expander("🎛️ 步驟 4：參數選擇與模型執行面板", expanded=is_expanded):
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_kernel = st.selectbox(
-                    "1️⃣ 選擇 Kernel 核函數", 
-                    ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
-                )
-            with col2:
-                bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
-                if bw_mode == "使用演算法":
-                    selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
-                    final_bw = selected_bw.split(" ")[0]
-                else:
-                    final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
-
-            predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
-            
-            # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值 (必須縮排在 expander 內)
-            if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
-                st.session_state.nw_executed = True  # 解鎖步驟 5
-                
-                clean_kernel = selected_kernel.split(" ")[0]
-                
-                # 加上預測指令
-                predict_instruction = f"另外，請根據上述模型，計算當 X = {predict_x} 時的 Nadaraya-Watson 預測值 $\\hat{{Y}}$，並在對話中列出計算結果。"
-                
-                trigger_stage_2_prompt = (
-                    f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
-                    f"{predict_instruction}\n"
-                    f"{st.session_state.raw_data_instruction}\n"
-                    "[系統提示：學生已透過 UI 做出選擇與給定預測 X，現在正式進入『狀態二』。請務必使用上面指定的真實資料，輸出 NW 迴歸說明、預測值計算、與完整的 R 繪圖程式碼 (```r ... ```)！]"
-                )
-                
-                # UI 顯示學生的選擇 (維持原本邏輯)
-                st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**，請預測 X={predict_x} 的結果！"})
-                
-                with st.chat_message("user"):
-                    st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
-                        try:
-                            response = send_msg_smart(trigger_stage_2_prompt, config)
-                            response_text = response.text
-
-                            msg_data = {"role": "assistant", "content": response_text}
-
-                            # 🌟 1. 先從 AI 回應中萃取出 R 程式碼
-                            r_code_match = re.search(
-                                r"```r\n(.*?)```", response_text, re.DOTALL
-                            )
-                            
-                            exact_pred_y = "無"
-                            if r_code_match:
-                                r_code = r_code_match.group(1)
-                                if any(
-                                    kw in r_code
-                                    for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
-                                ):
-                                    # 🌟 2. 確定有 r_code 之後，再把它傳進去執行與計算預測值
-                                    img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
-                                    
-                                    # 把 R 算出的精準數值存起來
-                                    st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
-
-                                    if img_path:
-                                        st.image(
-                                            img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
-                                        )
-                                        msg_data["img_path"] = img_path
-                                    elif err:
-                                        st.warning(f"R 繪圖執行提示：\n{err}")
-
-                            # 🌟 3. 如果 R 有算出精準預測值，把它附加在顯示的文字後面
-                            if exact_pred_y and exact_pred_y != "無":
-                                response_text += f"\n\n👉 **【系統精準計算結果】**：當 X = `{predict_x}` 時，根據 R 引擎計算之 $\\hat{{Y}}$ 預測值為 **`{exact_pred_y}`**。"
-
-                            st.markdown(response_text)
-                            msg_data["content"] = response_text
-                            st.session_state.messages.append(msg_data)
-
-                        except Exception as e:
-                            st.error(f"發生錯誤：{e}")
+    st.markdown("---")
+    st.subheader("🎛️ 步驟 4：參數選擇區 (請依據上方教學選擇)")
     
-    # 🌟 功能二：自由問答區 (強制禁止解釋過程，要求直接給精準數值)
-    # ==========================================
-    # 🌟 底部聊天輸入框
-    # ==========================================
+    # UI 選單設計
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_kernel = st.selectbox(
+            "1️⃣ 選擇 Kernel 核函數", 
+            ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
+        )
+    with col2:
+        bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
+        if bw_mode == "使用演算法":
+            selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
+            final_bw = selected_bw.split(" ")[0] # 取出 SJ, nrd0 等簡稱
+        else:
+            final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
 
-    if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
-        st.session_state.messages.append({"role": "user", "content": user_input})
+    # 一鍵觸發 NW 迴歸的按鈕
+    if st.button("🚀 確認參數，執行 NW 核迴歸繪圖！", type="primary", use_container_width=True):
+        clean_kernel = selected_kernel.split(" ")[0]
         
-        current_kernel = selected_kernel.split(" ")[0]
-        cached_y = st.session_state.get("exact_pred_y", "無")
-        
-        qa_prompt = (
-            f"學生提問：{user_input}\n\n"
-            f"[系統強制鐵律：\n"
-            f"1. 學生目前已經在面板選擇了【{current_kernel} Kernel】與【Bandwidth = {final_bw}】。\n"
-            f"2. ⚠️【絕對禁忌】：當學生詢問預測值或計算結果時，【絕對禁止】解釋計算過程、【絕對禁止】列出公式推導、【絕對禁止】輸出任何 R 程式碼！\n"
-            f"3. 你必須【直接給出最終的精準數值】。先前系統以 R 引擎計算出的參考預測值為：{cached_y}。\n"
-            f"4. 請直接用一句話回答數字，不准囉嗦！\n"
-            f"5. 必須嚴格根據以下真實資料：\n{st.session_state.raw_data_instruction}]"
+        # 🌟 關鍵修復：在點擊按鈕傳送時，強制把學生剛才輸入的「原始資料指令」再次塞給 AI
+        trigger_stage_2_prompt = (
+            f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
+            f"{st.session_state.raw_data_instruction}\n"
+            "[系統提示：學生已透過 UI 做出選擇，現在正式進入『狀態二』。請務必使用上面指定的真實資料，輸出 NW 迴歸說明與完整的 R 繪圖程式碼 (```r ... ```)！]"
         )
         
+        st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！"})
+        
+        with st.chat_message("user"):
+            st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
+
         with st.chat_message("assistant"):
-            with st.spinner("助教計算中..."):
+            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
                 try:
-                    response = send_msg_smart(qa_prompt, config)
+                    response = send_msg_smart(trigger_stage_2_prompt, config)
+                    response_text = response.text
+                    st.markdown(response_text)
+
+                    msg_data = {"role": "assistant", "content": response_text}
+
+                    r_code_match = re.search(
+                        r"```r\n(.*?)```", response_text, re.DOTALL
+                    )
+                    if r_code_match:
+                        r_code = r_code_match.group(1)
+                        if any(
+                            kw in r_code
+                            for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
+                        ):
+                            img_path, err = execute_r_code_and_get_image(r_code)
+                            if img_path:
+                                st.image(
+                                    img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
+                                )
+                                msg_data["img_path"] = img_path
+                            elif err:
+                                st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
+
+                    st.session_state.messages.append(msg_data)
+                except Exception as e:
+                    st.error(f"發生錯誤：{e}")
+
+    if user_input := st.chat_input("對剛才的理論有疑問嗎？可以在此自由向 Agent 發問..."):
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        
+        with st.chat_message("assistant"):
+            with st.spinner("Agent 回覆中..."):
+                try:
+                    response = send_msg_smart(user_input, config)
                     response_text = response.text
                     st.markdown(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
-                    st.rerun()
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
