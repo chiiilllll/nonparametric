@@ -149,6 +149,16 @@ def execute_r_code_and_get_image(r_code, predict_x=None):
                 pred_y <- sum(weights * Y) / sum(weights)
                 cat(paste0("R_PRED_VAL:", pred_y))
             }}
+            # 計算預測值
+            res_ks <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = x0)
+            pred_y <- res_ks$y
+            
+            if (!is.na(pred_y)) {{
+                cat(paste0("R_PRED_VAL:", pred_y))
+                # 🌟 自動在圖表上標註預測點與文字標籤
+                points(x0, pred_y, col = "red", pch = 19, cex = 1.5)
+                text(x0, pred_y, labels = sprintf("Pred at X=%.1f (Y=%.2f)", x0, pred_y), pos = 3, col = "red", font = 2)
+            }}
         }}, error = function(e) {{}} )
         """
 
@@ -507,21 +517,15 @@ if has_input:
             )
     # 🌟 功能二：自由問答區 (強制禁止解釋過程，要求直接給精準數值)
     # ==========================================
-    # 🌟 底部自由問答區 (修正歷史紀錄消失的問題)
+    # 🌟 底部聊天輸入框
     # ==========================================
-    st.markdown("---")
-    st.subheader("💬 自由問答互動區")
-
-    # 1. 先在最下方渲染所有的歷史對話（確保最新問答不會被洗掉）
     for msg in st.session_state.get("messages", []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if "img_path" in msg:
                 st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    # 2. 接收當下輸入的問答
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
-        # 先把使用者訊息放入 session
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         current_kernel = selected_kernel.split(" ")[0]
@@ -544,6 +548,6 @@ if has_input:
                     response_text = response.text
                     st.markdown(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
-                    st.rerun() # 重新整理以確保畫面上立刻顯示最新對話
+                    st.rerun()
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
