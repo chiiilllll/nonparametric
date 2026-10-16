@@ -188,7 +188,6 @@ else:
         # 📌 把學生貼的原始數據直接綁進去
         st.session_state.raw_data_instruction = f"【強制規範】：在編寫 R 程式碼時，必須使用以下這段學生提供的真實數據進行分析，絕對不准自己編造假資料：\n{raw_text.strip()}"
         has_input = True
-
 if has_input:
     if "gemini_client" not in st.session_state:
         st.session_state.gemini_client = genai.Client(api_key=api_key)
@@ -333,7 +332,7 @@ if has_input:
         st.markdown("---")
         st.subheader("📄 步驟 5：匯出分析報告")
         if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
-            # 確保抓到畫面上最新的選擇參數
+            # 👇 就是這裡！從這裡開始必須往內縮排
             clean_kernel = selected_kernel.split(" ")[0]
             with st.spinner("Agent 正在彙整真實資料與實作結果為報告中..."):
                 
