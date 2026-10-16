@@ -33,6 +33,10 @@ if "messages" not in st.session_state:
 if "report_content" not in st.session_state:
     st.session_state.report_content = ""
 
+# 🌟 新增：追蹤步驟流程，確保報告按鈕不會提早跑出來
+if "nw_executed" not in st.session_state:
+    st.session_state.nw_executed = False
+
 # ==========================================
 # 🔑 步驟 1：強制使用者輸入 API Key
 # ==========================================
@@ -272,6 +276,8 @@ if has_input:
 
     # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值
     if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
+        st.session_state.nw_executed = True  # 解鎖步驟 5
+        
         clean_kernel = selected_kernel.split(" ")[0]
         
         # 加上預測指令
@@ -321,51 +327,78 @@ if has_input:
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
-    # 🌟 新增功能三：產出 Markdown 實驗報告按鈕
-    st.markdown("---")
-    st.subheader("📄 步驟 5：匯出分析報告")
-    if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
-        with st.spinner("Agent 正在彙整對話、統計理論與實作結果為報告中..."):
-            report_prompt = (
-                "請根據我們剛才的對話與實作結果，為我撰寫一份完整的【無母數迴歸分析實驗報告】(Markdown 格式)。\n"
-                "報告內容必須包含：\n"
-                "1. 實驗目的與無母數統計概念簡述\n"
-                "2. 數據來源與敘述性統計摘要\n"
-                "3. 超參數選擇決策（Kernel 與 Bandwidth 的選型理由與權衡）\n"
-                "4. Nadaraya-Watson 迴歸數學原理與邊界偏差討論\n"
-                "5. R 語言實作關鍵程式碼\n"
-                "6. 結論與心得\n"
-                "請直接輸出排版精美的 Markdown 格式文字。"
+    # 🌟 功能三：產出 Markdown 實驗報告按鈕 (加上條件判斷，確保畫完圖才出現)
+    if st.session_state.nw_executed:
+        st.markdown("---")
+        st.subheader("📄 步驟 5：匯出分析報告")
+        if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
+            with st.spinner("Agent 正在彙整對話、統計理論與實作結果為報告中..."):
+                # 📌 給予絕對固定的 Markdown 範本，強制 AI 只能填空，確保每次報告長得一模一樣
+                report_prompt = (
+                    "請根據我們剛才的對話與實作結果，產生一份【格式絕對固定】的 Markdown 報告。\n"
+                    "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題或改變排版！\n\n"
+                    "```markdown\n"
+                    "# 無母數迴歸分析實驗報告\n\n"
+                    "## 1. 實驗目的與概念\n"
+                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
+                    "## 2. 數據摘要\n"
+                    "- **資料特性**：[簡述資料筆數與變數 X, Y 的意義]\n\n"
+                    "## 3. 超參數決策\n"
+                    "- **選擇的 Kernel (核函數)**：[填寫剛剛選擇的 Kernel]\n"
+                    "- **選擇的 Bandwidth (頻寬)**：[填寫剛剛選擇的 h 數值或演算法]\n"
+                    "- **決策理由**：[簡述為什麼這樣選，以及預期平滑度表現]\n\n"
+                    "## 4. 數學原理與邊界偏差\n"
+                    "NW 迴歸的估計式為：\n"
+                    "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
+                    "**邊界偏差注意**：[請用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
+                    "## 5. R 語言實作關鍵程式碼\n"
+                    "```r\n"
+                    "[請貼上剛剛執行的完整 R 程式碼]\n"
+                    "```\n\n"
+                    "## 6. 結論與預測\n"
+                    "- **預測結果**：[若剛剛有輸入預測 X，請填寫 X=? 時，預測 Y=?。若無預測則寫無]\n"
+                    "- **綜合結論**：[請根據畫出來的圖表趨勢，用一句話做總結]\n"
+                    "```\n"
+                )
+                try:
+                    rep_res = send_msg_smart(report_prompt, config)
+                    # 清除可能多餘的 Markdown code block 標記
+                    clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
+                    st.session_state.report_content = clean_report
+                    st.success("報告產生成功！請至下方檢視與下載。")
+                except Exception as e:
+                    st.error(f"報告生成失敗：{e}")
+
+        # 如果已經產生報告，就顯示預覽與下載按鈕
+        if st.session_state.report_content:
+            st.markdown("### 📋 實驗報告預覽")
+            st.markdown(st.session_state.report_content)
+            st.download_button(
+                label="📥 下載 Markdown 實驗報告 (.md)",
+                data=st.session_state.report_content,
+                file_name="NW_Regression_Lab_Report.md",
+                mime="text/markdown",
+                type="primary"
             )
-            try:
-                rep_res = send_msg_smart(report_prompt, config)
-                st.session_state.report_content = rep_res.text
-                st.success("報告產生成功！請至下方檢視與下載。")
-            except Exception as e:
-                st.error(f"報告生成失敗：{e}")
 
-    # 如果已經產生報告，就顯示預覽與下載按鈕
-    if st.session_state.report_content:
-        st.markdown("### 📋 實驗報告預覽")
-        st.markdown(st.session_state.report_content)
-        st.download_button(
-            label="📥 下載 Markdown 實驗報告 (.md)",
-            data=st.session_state.report_content,
-            file_name="NW_Regression_Lab_Report.md",
-            mime="text/markdown",
-            type="primary"
-        )
-
-    # 🌟 功能二：原本就有的自由問答區 (把字串改得更明確)
+    # 🌟 功能二：自由問答區 (升級版：背景夾帶真實資料記憶)
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
         
+        # 📌 關鍵修復：在問答區的對話後面，偷偷夾帶原始資料的死命令
+        qa_prompt = (
+            f"{user_input}\n\n"
+            f"[系統強制提示：若學生的問題需要進行預測、計算或寫 R 程式碼，絕對不准自己編造假資料，"
+            f"必須嚴格遵守以下真實資料設定來進行計算：\n{st.session_state.raw_data_instruction}]"
+        )
+        
         with st.chat_message("assistant"):
             with st.spinner("助教解答中..."):
                 try:
-                    response = send_msg_smart(user_input, config)
+                    # 這裡改為送出加工過的 qa_prompt，但畫面上依然只顯示 user_input
+                    response = send_msg_smart(qa_prompt, config)
                     response_text = response.text
                     st.markdown(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
