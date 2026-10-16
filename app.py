@@ -67,28 +67,44 @@ MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash", 
 # ==========================================
 # 2. R 語言繪圖執行引擎
 # ==========================================
-# 🌟 升級版：執行 R 程式碼、產生圖片、並自動計算精準的給定 X 預測值
 def execute_r_code_and_get_image(r_code, predict_x=None):
     plot_filename = "output_plot.png"
     if os.path.exists(plot_filename):
         os.remove(plot_filename)
 
-    # 如果有給定預測 X，自動在 R 腳本結尾加上計算預測值並用 cat 印出的指令
+    # 🌟 透過 R 語言的數學公式與當前頻寬、核函數，精準計算給定 X 的預測值 Y
     prediction_script = ""
     if predict_x is not None:
         prediction_script = f"""
-        # 自動由 R 語言計算 Nadaraya-Watson 在 X = {predict_x} 時的預測值
         tryCatch({{
-            # 嘗試使用系統內建 ksmooth 計算預測值
-            fit_temp <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = {predict_x})
-            pred_y <- fit_temp$y
-        }}, error = function(e) {{
-            # 若自定義 kernel 則用權重公式計算
-            pred_y <- NA
-        }})
-        if (!is.na(pred_y)) {{
-            cat(paste0("R_PRED_VAL:", pred_y))
-        }}
+            x0 <- {predict_x}
+            if (!exists("h")) {{
+                if (exists("bw")) {{ h <- bw }} else {{ h <- sd(X)/4 }}
+            }}
+            
+            # 定義各類 Kernel 權重函數
+            k_func <- function(u) {{
+                k_type <- "{selected_kernel}"
+                if (grepl("Gaussian", k_type, ignore.case=TRUE)) {{
+                    return(dnorm(u))
+                }} else if (grepl("Epanechnikov", k_type, ignore.case=TRUE)) {{
+                    return(ifelse(abs(u) <= 1, 0.75 * (1 - u^2), 0))
+                }} else if (grepl("Rectangular", k_type, ignore.case=TRUE)) {{
+                    return(ifelse(abs(u) <= 1, 0.5, 0))
+                }} else if (grepl("Triangular", k_type, ignore.case=TRUE)) {{
+                    return(ifelse(abs(u) <= 1, 1 - abs(u), 0))
+                }} else {{
+                    return(dnorm(u))
+                }}
+            }}
+            
+            u <- (X - x0) / h
+            weights <- k_func(u)
+            if (sum(weights) > 0) {{
+                pred_y <- sum(weights * Y) / sum(weights)
+                cat(paste0("R_PRED_VAL:", pred_y))
+            }}
+        }}, error = function(e) {{}} )
         """
 
     wrapped_r_script = f"""
@@ -109,13 +125,15 @@ def execute_r_code_and_get_image(r_code, predict_x=None):
             ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
         )
         
-        # 從 R 的標準輸出 (stdout) 抓取精準算出的預測值
         if result.stdout and "R_PRED_VAL:" in result.stdout:
             for line in result.stdout.split("\n"):
                 if "R_PRED_VAL:" in line:
                     predicted_y_from_r = line.split("R_PRED_VAL:")[1].strip()
 
         if os.path.exists(plot_filename):
+            # 🌟 複製一份永久圖檔，供 Markdown 報告隨時抓取 Base64
+            import shutil
+            shutil.copy(plot_filename, "permanent_plot.png")
             return plot_filename, None, predicted_y_from_r
         else:
             return None, result.stderr, None
@@ -392,10 +410,10 @@ if has_input:
             clean_kernel = selected_kernel.split(" ")[0]
             with st.spinner("Agent 正在封裝真實資料、圖表與精準預測值為報告中..."):
                 
-                img_base64_str = get_image_base64("output_plot.png")
+                # 🌟 改抓 permanent_plot.png，確保 Base64 絕對能成功轉碼
+                img_base64_str = get_image_base64("permanent_plot.png")
                 img_markdown_tag = f"![NW Regression Plot](data:image/png;base64,{img_base64_str})" if img_base64_str else "[圖表生成中]"
                 
-                # 取得剛才 R 算出的精準預測值
                 final_y_val = st.session_state.get("exact_pred_y", "無")
 
                 report_prompt = (
@@ -441,26 +459,28 @@ if has_input:
                 use_container_width=True
             )
 
-    # 🌟 功能二：自由問答區 (修改回答方式：禁止給程式碼，直接給計算數值與答案)
+    # 🌟 功能二：自由問答區 (強制禁止解釋過程，要求直接給精準數值)
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         current_kernel = selected_kernel.split(" ")[0]
+        cached_y = st.session_state.get("exact_pred_y", "無")
         
-        # 📌 關鍵修改：嚴格規定自由問答「絕對不准給 R 程式碼」，必須直接給出數值與觀念解答
+        # 📌 終極死命令：絕對不准講廢話與解釋公式，直接給答案！
         qa_prompt = (
             f"學生提問：{user_input}\n\n"
-            f"[系統強制提示：\n"
+            f"[系統強制鐵律：\n"
             f"1. 學生目前已經在面板選擇了【{current_kernel} Kernel】與【Bandwidth = {final_bw}】。\n"
-            f"2. 這是『自由問答階段』。請直接針對學生的問題進行解答，【絕對不要】再叫學生重新選擇 Kernel 或 Bandwidth！\n"
-            f"3. ⚠️【絕對禁忌】：在自由問答中，【絕對禁止】輸出任何 R 程式碼 (```r ... ```) 或教導學生怎麼寫程式碼。若學生詢問預測值（例如給定 X 求 Y）或計算問題，請直接在文字中算出並【直接給出精準數值】！\n"
-            f"4. 進行計算與回答時，絕對不准自己編造假資料，必須嚴格遵守以下真實資料設定：\n{st.session_state.raw_data_instruction}]"
+            f"2. ⚠️【絕對禁忌】：當學生詢問預測值或計算結果時，【絕對禁止】解釋計算過程、【絕對禁止】列出公式推導、【絕對禁止】輸出任何 R 程式碼！\n"
+            f"3. 你必須【直接給出最終的精準數值】。先前系統以 R 引擎計算出的參考預測值為：{cached_y}。\n"
+            f"4. 請直接用一句話回答數字，不准囉嗦！\n"
+            f"5. 必須嚴格根據以下真實資料：\n{st.session_state.raw_data_instruction}]"
         )
         
         with st.chat_message("assistant"):
-            with st.spinner("助教解答中..."):
+            with st.spinner("助教計算中..."):
                 try:
                     response = send_msg_smart(qa_prompt, config)
                     response_text = response.text
