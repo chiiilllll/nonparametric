@@ -339,31 +339,47 @@ if has_input:
             st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
 
         with st.chat_message("assistant"):
-            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與精準預測中..."):
+            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
                 try:
-                    # 🌟 關鍵：將 predict_x 傳給 R 引擎計算真實數值
-                    img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
-                    
-                    # 把 R 算出的正確數值存入 session，供後面報告與對話使用
-                    st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
-
                     response = send_msg_smart(trigger_stage_2_prompt, config)
                     response_text = response.text
+
+                    msg_data = {"role": "assistant", "content": response_text}
+
+                    # 🌟 1. 先從 AI 回應中萃取出 R 程式碼
+                    r_code_match = re.search(
+                        r"```r\n(.*?)```", response_text, re.DOTALL
+                    )
                     
-                    # 如果 AI 文字沒寫出正確數字，我們直接在下方補上 R 算出的精準數字
-                    if exact_pred_y:
+                    exact_pred_y = "無"
+                    if r_code_match:
+                        r_code = r_code_match.group(1)
+                        if any(
+                            kw in r_code
+                            for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
+                        ):
+                            # 🌟 2. 確定有 r_code 之後，再把它傳進去執行與計算預測值
+                            img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
+                            
+                            # 把 R 算出的精準數值存起來
+                            st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
+
+                            if img_path:
+                                st.image(
+                                    img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
+                                )
+                                msg_data["img_path"] = img_path
+                            elif err:
+                                st.warning(f"R 繪圖執行提示：\n{err}")
+
+                    # 🌟 3. 如果 R 有算出精準預測值，把它附加在顯示的文字後面
+                    if exact_pred_y and exact_pred_y != "無":
                         response_text += f"\n\n👉 **【系統精準計算結果】**：當 X = `{predict_x}` 時，根據 R 引擎計算之 $\\hat{{Y}}$ 預測值為 **`{exact_pred_y}`**。"
 
                     st.markdown(response_text)
-
-                    msg_data = {"role": "assistant", "content": response_text}
-                    if img_path:
-                        st.image(img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})")
-                        msg_data["img_path"] = img_path
-                    elif err:
-                        st.warning(f"R 繪圖執行提示：\n{err}")
-
+                    msg_data["content"] = response_text
                     st.session_state.messages.append(msg_data)
+
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
