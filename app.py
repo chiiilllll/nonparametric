@@ -188,6 +188,7 @@ else:
         # 📌 把學生貼的原始數據直接綁進去
         st.session_state.raw_data_instruction = f"【強制規範】：在編寫 R 程式碼時，必須使用以下這段學生提供的真實數據進行分析，絕對不准自己編造假資料：\n{raw_text.strip()}"
         has_input = True
+
 if has_input:
     if "gemini_client" not in st.session_state:
         st.session_state.gemini_client = genai.Client(api_key=api_key)
@@ -332,47 +333,47 @@ if has_input:
         st.markdown("---")
         st.subheader("📄 步驟 5：匯出分析報告")
         if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
-        # 確保抓到畫面上最新的選擇參數
-        clean_kernel = selected_kernel.split(" ")[0]
-        with st.spinner("Agent 正在彙整真實資料與實作結果為報告中..."):
-            
-            # 🌟 關鍵修復：把真實資料、選定的 Kernel、Bandwidth 和預測 X 全部綁進去！
-            report_prompt = (
-                f"{st.session_state.raw_data_instruction}\n"
-                f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
-                "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
-                "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
-                "```markdown\n"
-                "# 無母數迴歸分析實驗報告\n\n"
-                "## 1. 實驗目的與概念\n"
-                "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
-                "## 2. 數據摘要\n"
-                "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
-                "## 3. 超參數決策\n"
-                "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
-                "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
-                "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
-                "## 4. 數學原理與邊界偏差\n"
-                "NW 迴歸的估計式為：\n"
-                "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
-                "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
-                "## 5. R 語言實作關鍵程式碼\n"
-                "```r\n"
-                "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
-                "```\n\n"
-                "## 6. 結論與預測\n"
-                "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
-                "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
-                "```\n"
-            )
-            try:
-                rep_res = send_msg_smart(report_prompt, config)
-                # 清除可能多餘的 Markdown code block 標記，確保排版乾淨
-                clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
-                st.session_state.report_content = clean_report
-                st.success("報告產生成功！請至下方檢視與下載。")
-            except Exception as e:
-                st.error(f"報告生成失敗：{e}")
+            # 確保抓到畫面上最新的選擇參數
+            clean_kernel = selected_kernel.split(" ")[0]
+            with st.spinner("Agent 正在彙整真實資料與實作結果為報告中..."):
+                
+                # 🌟 關鍵修復：把真實資料、選定的 Kernel、Bandwidth 和預測 X 全部綁進去！
+                report_prompt = (
+                    f"{st.session_state.raw_data_instruction}\n"
+                    f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
+                    "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
+                    "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
+                    "```markdown\n"
+                    "# 無母數迴歸分析實驗報告\n\n"
+                    "## 1. 實驗目的與概念\n"
+                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
+                    "## 2. 數據摘要\n"
+                    "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
+                    "## 3. 超參數決策\n"
+                    "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
+                    "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
+                    "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
+                    "## 4. 數學原理與邊界偏差\n"
+                    "NW 迴歸的估計式為：\n"
+                    "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
+                    "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
+                    "## 5. R 語言實作關鍵程式碼\n"
+                    "```r\n"
+                    "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
+                    "```\n\n"
+                    "## 6. 結論與預測\n"
+                    "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
+                    "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
+                    "```\n"
+                )
+                try:
+                    rep_res = send_msg_smart(report_prompt, config)
+                    # 清除可能多餘的 Markdown code block 標記，確保排版乾淨
+                    clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
+                    st.session_state.report_content = clean_report
+                    st.success("報告產生成功！請至下方檢視與下載。")
+                except Exception as e:
+                    st.error(f"報告生成失敗：{e}")
 
         # 如果已經產生報告，就顯示預覽與下載按鈕
         if st.session_state.report_content:
