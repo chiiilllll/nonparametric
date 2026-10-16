@@ -334,90 +334,92 @@ if has_input:
     if len(st.session_state.get("messages", [])) > 0:
         st.markdown("---")
         is_expanded = not st.session_state.get("nw_executed", False)
+        
+        # 🌟 這裡加上 with expander，並確保底下的所有元件都向內縮排一層！
         with st.expander("🎛️ 步驟 4：參數選擇與模型執行面板", expanded=is_expanded):
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_kernel = st.selectbox(
-                "1️⃣ 選擇 Kernel 核函數", 
-                ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
-            )
-        with col2:
-            bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
-            if bw_mode == "使用演算法":
-                selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
-                final_bw = selected_bw.split(" ")[0]
-            else:
-                final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_kernel = st.selectbox(
+                    "1️⃣ 選擇 Kernel 核函數", 
+                    ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
+                )
+            with col2:
+                bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
+                if bw_mode == "使用演算法":
+                    selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
+                    final_bw = selected_bw.split(" ")[0]
+                else:
+                    final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
 
-        predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
-    # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值
-    if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
-        st.session_state.nw_executed = True  # 解鎖步驟 5
-        
-        clean_kernel = selected_kernel.split(" ")[0]
-        
-        # 加上預測指令
-        predict_instruction = f"另外，請根據上述模型，計算當 X = {predict_x} 時的 Nadaraya-Watson 預測值 $\\hat{{Y}}$，並在對話中列出計算結果。"
-        
-        trigger_stage_2_prompt = (
-            f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
-            f"{predict_instruction}\n"
-            f"{st.session_state.raw_data_instruction}\n"
-            "[系統提示：學生已透過 UI 做出選擇與給定預測 X，現在正式進入『狀態二』。請務必使用上面指定的真實資料，輸出 NW 迴歸說明、預測值計算、與完整的 R 繪圖程式碼 (```r ... ```)！]"
-        )
-        
-        # UI 顯示學生的選擇 (維持原本邏輯)
-        st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**，請預測 X={predict_x} 的結果！"})
-        
-        with st.chat_message("user"):
-            st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
+            predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
+            
+            # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值 (必須縮排在 expander 內)
+            if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
+                st.session_state.nw_executed = True  # 解鎖步驟 5
+                
+                clean_kernel = selected_kernel.split(" ")[0]
+                
+                # 加上預測指令
+                predict_instruction = f"另外，請根據上述模型，計算當 X = {predict_x} 時的 Nadaraya-Watson 預測值 $\\hat{{Y}}$，並在對話中列出計算結果。"
+                
+                trigger_stage_2_prompt = (
+                    f"我決定選擇 【{clean_kernel} Kernel】 與 【頻寬 Bandwidth = {final_bw}】。\n"
+                    f"{predict_instruction}\n"
+                    f"{st.session_state.raw_data_instruction}\n"
+                    "[系統提示：學生已透過 UI 做出選擇與給定預測 X，現在正式進入『狀態二』。請務必使用上面指定的真實資料，輸出 NW 迴歸說明、預測值計算、與完整的 R 繪圖程式碼 (```r ... ```)！]"
+                )
+                
+                # UI 顯示學生的選擇 (維持原本邏輯)
+                st.session_state.messages.append({"role": "user", "content": f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**，請預測 X={predict_x} 的結果！"})
+                
+                with st.chat_message("user"):
+                    st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
 
-        with st.chat_message("assistant"):
-            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
-                try:
-                    response = send_msg_smart(trigger_stage_2_prompt, config)
-                    response_text = response.text
+                with st.chat_message("assistant"):
+                    with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
+                        try:
+                            response = send_msg_smart(trigger_stage_2_prompt, config)
+                            response_text = response.text
 
-                    msg_data = {"role": "assistant", "content": response_text}
+                            msg_data = {"role": "assistant", "content": response_text}
 
-                    # 🌟 1. 先從 AI 回應中萃取出 R 程式碼
-                    r_code_match = re.search(
-                        r"```r\n(.*?)```", response_text, re.DOTALL
-                    )
-                    
-                    exact_pred_y = "無"
-                    if r_code_match:
-                        r_code = r_code_match.group(1)
-                        if any(
-                            kw in r_code
-                            for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
-                        ):
-                            # 🌟 2. 確定有 r_code 之後，再把它傳進去執行與計算預測值
-                            img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
+                            # 🌟 1. 先從 AI 回應中萃取出 R 程式碼
+                            r_code_match = re.search(
+                                r"```r\n(.*?)```", response_text, re.DOTALL
+                            )
                             
-                            # 把 R 算出的精準數值存起來
-                            st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
+                            exact_pred_y = "無"
+                            if r_code_match:
+                                r_code = r_code_match.group(1)
+                                if any(
+                                    kw in r_code
+                                    for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
+                                ):
+                                    # 🌟 2. 確定有 r_code 之後，再把它傳進去執行與計算預測值
+                                    img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
+                                    
+                                    # 把 R 算出的精準數值存起來
+                                    st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
 
-                            if img_path:
-                                st.image(
-                                    img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
-                                )
-                                msg_data["img_path"] = img_path
-                            elif err:
-                                st.warning(f"R 繪圖執行提示：\n{err}")
+                                    if img_path:
+                                        st.image(
+                                            img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
+                                        )
+                                        msg_data["img_path"] = img_path
+                                    elif err:
+                                        st.warning(f"R 繪圖執行提示：\n{err}")
 
-                    # 🌟 3. 如果 R 有算出精準預測值，把它附加在顯示的文字後面
-                    if exact_pred_y and exact_pred_y != "無":
-                        response_text += f"\n\n👉 **【系統精準計算結果】**：當 X = `{predict_x}` 時，根據 R 引擎計算之 $\\hat{{Y}}$ 預測值為 **`{exact_pred_y}`**。"
+                            # 🌟 3. 如果 R 有算出精準預測值，把它附加在顯示的文字後面
+                            if exact_pred_y and exact_pred_y != "無":
+                                response_text += f"\n\n👉 **【系統精準計算結果】**：當 X = `{predict_x}` 時，根據 R 引擎計算之 $\\hat{{Y}}$ 預測值為 **`{exact_pred_y}`**。"
 
-                    st.markdown(response_text)
-                    msg_data["content"] = response_text
-                    st.session_state.messages.append(msg_data)
+                            st.markdown(response_text)
+                            msg_data["content"] = response_text
+                            st.session_state.messages.append(msg_data)
 
-                except Exception as e:
-                    st.error(f"發生錯誤：{e}")
-
+                        except Exception as e:
+                            st.error(f"發生錯誤：{e}")
     
     # 🌟 功能二：自由問答區 (強制禁止解釋過程，要求直接給精準數值)
     # ==========================================
