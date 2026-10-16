@@ -68,9 +68,54 @@ MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash", 
 # 2. R 語言繪圖執行引擎
 # ==========================================
 def execute_r_code_and_get_image(r_code, predict_x=None):
-    plot_filename = "output_plot.png"
-    if os.path.exists(plot_filename):
-        os.remove(plot_filename)
+    # 🌟 使用毫秒時間戳記產生獨一無二的圖片檔名，防止歷史圖片被覆蓋
+    unique_id = int(time.time() * 1000)
+    plot_filename = f"plot_{unique_id}.png"
+
+    prediction_script = ""
+    if predict_x is not None:
+        prediction_script = f"""
+        tryCatch({{
+            # 優先使用 R 內建的 ksmooth 計算精準預測值
+            res_ks <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = {predict_x})
+            pred_y <- res_ks$y
+            if (!is.na(pred_y)) {{
+                cat(paste0("R_PRED_VAL:", pred_y))
+            }}
+        }}, error = function(e) {{}} )
+        """
+
+    wrapped_r_script = f"""
+    options(warn=-1)
+    png('{plot_filename}', width=800, height=550, res=110)
+    set.seed(42)
+    {r_code}
+    {prediction_script}
+    dev.off()
+    """
+
+    with open("temp_script.R", "w", encoding="utf-8") as f:
+        f.write(wrapped_r_script)
+
+    predicted_y_from_r = None
+    try:
+        result = subprocess.run(
+            ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
+        )
+        
+        if result.stdout and "R_PRED_VAL:" in result.stdout:
+            for line in result.stdout.split("\n"):
+                if "R_PRED_VAL:" in line:
+                    predicted_y_from_r = line.split("R_PRED_VAL:")[1].strip()
+
+        if os.path.exists(plot_filename):
+            import shutil
+            shutil.copy(plot_filename, "permanent_plot.png")
+            return plot_filename, None, predicted_y_from_r
+        else:
+            return None, result.stderr, None
+    except Exception as e:
+        return None, str(e), None
 
     # 🌟 透過 R 語言的數學公式與當前頻寬、核函數，精準計算給定 X 的預測值 Y
     prediction_script = ""
@@ -410,10 +455,9 @@ if has_input:
             clean_kernel = selected_kernel.split(" ")[0]
             with st.spinner("Agent 正在封裝真實資料、圖表與精準預測值為報告中..."):
                 
-                # 🌟 改抓 permanent_plot.png，確保 Base64 絕對能成功轉碼
+                # 確保報告永遠抓取當前最新的永久圖檔進行 Base64 編碼
                 img_base64_str = get_image_base64("permanent_plot.png")
                 img_markdown_tag = f"![NW Regression Plot](data:image/png;base64,{img_base64_str})" if img_base64_str else "[圖表生成中]"
-                
                 final_y_val = st.session_state.get("exact_pred_y", "無")
 
                 report_prompt = (
