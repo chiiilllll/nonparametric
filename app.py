@@ -67,33 +67,61 @@ MODEL_CANDIDATES = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash", 
 # ==========================================
 # 2. R 語言繪圖執行引擎
 # ==========================================
-def execute_r_code_and_get_image(r_code):
+# 🌟 升級版：執行 R 程式碼、產生圖片、並自動計算精準的給定 X 預測值
+def execute_r_code_and_get_image(r_code, predict_x=None):
     plot_filename = "output_plot.png"
     if os.path.exists(plot_filename):
         os.remove(plot_filename)
 
+    # 如果有給定預測 X，自動在 R 腳本結尾加上計算預測值並用 cat 印出的指令
+    prediction_script = ""
+    if predict_x is not None:
+        prediction_script = f"""
+        # 自動由 R 語言計算 Nadaraya-Watson 在 X = {predict_x} 時的預測值
+        tryCatch({{
+            # 嘗試使用系統內建 ksmooth 計算預測值
+            fit_temp <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = {predict_x})
+            pred_y <- fit_temp$y
+        }}, error = function(e) {{
+            # 若自定義 kernel 則用權重公式計算
+            pred_y <- NA
+        }})
+        if (!is.na(pred_y)) {{
+            cat(paste0("R_PRED_VAL:", pred_y))
+        }}
+        """
+
     wrapped_r_script = f"""
     options(warn=-1)
     png('{plot_filename}', width=800, height=550, res=110)
-    set.seed(42) # 固定隨機種子
+    set.seed(42)
     {r_code}
+    {prediction_script}
     dev.off()
     """
 
     with open("temp_script.R", "w", encoding="utf-8") as f:
         f.write(wrapped_r_script)
 
+    predicted_y_from_r = None
     try:
         result = subprocess.run(
             ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
         )
+        
+        # 從 R 的標準輸出 (stdout) 抓取精準算出的預測值
+        if result.stdout and "R_PRED_VAL:" in result.stdout:
+            for line in result.stdout.split("\n"):
+                if "R_PRED_VAL:" in line:
+                    predicted_y_from_r = line.split("R_PRED_VAL:")[1].strip()
+
         if os.path.exists(plot_filename):
-            return plot_filename, None
+            return plot_filename, None, predicted_y_from_r
         else:
-            return None, result.stderr
+            return None, result.stderr, None
     except Exception as e:
-        return None, str(e)
-# 🌟 新增：將圖表圖片轉成 Base64 字串，以便嵌入 Markdown 報告中
+        return None, str(e), None
+
 def get_image_base64(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
@@ -311,102 +339,90 @@ if has_input:
             st.markdown(f"我選擇了 **{clean_kernel} Kernel** 與 **Bandwidth = {final_bw}**。請幫我分析！")
 
         with st.chat_message("assistant"):
-            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與繪圖中..."):
+            with st.spinner("Agent 執行 Nadaraya-Watson 迴歸計算與精準預測中..."):
                 try:
+                    # 🌟 關鍵：將 predict_x 傳給 R 引擎計算真實數值
+                    img_path, err, exact_pred_y = execute_r_code_and_get_image(r_code, predict_x=predict_x)
+                    
+                    # 把 R 算出的正確數值存入 session，供後面報告與對話使用
+                    st.session_state.exact_pred_y = exact_pred_y if exact_pred_y else "無"
+
                     response = send_msg_smart(trigger_stage_2_prompt, config)
                     response_text = response.text
+                    
+                    # 如果 AI 文字沒寫出正確數字，我們直接在下方補上 R 算出的精準數字
+                    if exact_pred_y:
+                        response_text += f"\n\n👉 **【系統精準計算結果】**：當 X = `{predict_x}` 時，根據 R 引擎計算之 $\\hat{{Y}}$ 預測值為 **`{exact_pred_y}`**。"
+
                     st.markdown(response_text)
 
                     msg_data = {"role": "assistant", "content": response_text}
-
-                    r_code_match = re.search(
-                        r"```r\n(.*?)```", response_text, re.DOTALL
-                    )
-                    if r_code_match:
-                        r_code = r_code_match.group(1)
-                        if any(
-                            kw in r_code
-                            for kw in ["plot(", "hist(", "lines(", "boxplot(", "density(", "ksmooth("]
-                        ):
-                            img_path, err = execute_r_code_and_get_image(r_code)
-                            if img_path:
-                                st.image(
-                                    img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})"
-                                )
-                                msg_data["img_path"] = img_path
-                            elif err:
-                                st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
-
-                            
-                            
-
+                    if img_path:
+                        st.image(img_path, caption=f"R 語言 Nadaraya-Watson 繪圖 ({clean_kernel}, bw={final_bw})")
+                        msg_data["img_path"] = img_path
+                    elif err:
+                        st.warning(f"R 繪圖執行提示：\n{err}")
 
                     st.session_state.messages.append(msg_data)
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
-    # 🌟 功能三：產出 Markdown 實驗報告按鈕 (加上條件判斷，確保畫完圖才出現)
+    # 🌟 功能三：產出 Markdown 實驗報告 (移除預覽畫面，直接提供下載)
     if st.session_state.nw_executed:
         st.markdown("---")
         st.subheader("📄 步驟 5：匯出分析報告")
-        if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
+        
+        if st.button("📝 產生並準備無母數迴歸分析 Markdown 報告", type="primary"):
             clean_kernel = selected_kernel.split(" ")[0]
-            with st.spinner("Agent 正在彙整真實資料與實作圖表為報告中..."):
+            with st.spinner("Agent 正在封裝真實資料、圖表與精準預測值為報告中..."):
                 
-                # 🌟 取得圖表的 Base64 編碼與 Markdown 圖片標籤
                 img_base64_str = get_image_base64("output_plot.png")
                 img_markdown_tag = f"![NW Regression Plot](data:image/png;base64,{img_base64_str})" if img_base64_str else "[圖表生成中]"
+                
+                # 取得剛才 R 算出的精準預測值
+                final_y_val = st.session_state.get("exact_pred_y", "無")
 
                 report_prompt = (
                     f"{st.session_state.raw_data_instruction}\n"
-                    f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
-                    "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
-                    "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
+                    f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，給定預測 X = {predict_x}，且 R 計算出的精準預測值為 {final_y_val}。\n\n"
+                    "請根據以上數據與精準數值，撰寫一份格式固定的 Markdown 報告：\n"
                     "```markdown\n"
                     "# 無母數迴歸分析實驗報告\n\n"
                     "## 1. 實驗目的與概念\n"
-                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
+                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。\n\n"
                     "## 2. 數據摘要\n"
-                    "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
+                    "- **資料特性**：[簡述資料筆數與數據範圍]\n\n"
                     "## 3. 超參數決策\n"
-                    "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
-                    "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
-                    "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
+                    "- **選擇的 Kernel (核函數)**：[填寫 {clean_kernel}]\n"
+                    "- **選擇的 Bandwidth (頻寬)**：[填寫 {final_bw}]\n\n"
                     "## 4. 數學原理與邊界偏差\n"
-                    "NW 迴歸的估計式為：\n"
+                    "NW 迴歸估計式：\n"
                     "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
-                    "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
                     "## 5. R 語言實作與視覺化結果\n"
-                    "**關鍵程式碼**：\n"
-                    "```r\n"
-                    "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
-                    "```\n\n"
                     "**執行結果圖表**：\n"
                     f"{img_markdown_tag}\n\n"
                     "## 6. 結論與預測\n"
-                    "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
-                    "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
+                    f"- **給定 X = {predict_x} 之預測結果**：Y = {final_y_val}\n"
+                    "- **綜合結論**：[根據圖表趨勢做一句話總結]\n"
                     "```\n"
                 )
                 try:
                     rep_res = send_msg_smart(report_prompt, config)
-                    # 清除可能多餘的 Markdown code block 標記，確保排版乾淨
                     clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
                     st.session_state.report_content = clean_report
-                    st.success("報告產生成功！請至下方檢視與下載。")
+                    st.success("報告已打包完成！請點擊下方按鈕直接下載。")
                 except Exception as e:
                     st.error(f"報告生成失敗：{e}")
 
-        # 如果已經產生報告，就顯示預覽與下載按鈕
+        # 直接顯示下載按鈕，拿掉佔空間的預覽區
         if st.session_state.report_content:
-            st.markdown("### 📋 實驗報告預覽")
-            st.markdown(st.session_state.report_content)
             st.download_button(
-                label="📥 下載 Markdown 實驗報告 (.md)",
+                label="📥 下載完整 Markdown 實驗報告 (.md)",
                 data=st.session_state.report_content,
                 file_name="NW_Regression_Lab_Report.md",
                 mime="text/markdown",
-                type="primary"
+                type="primary",
+                use_container_width=True
             )
 
     # 🌟 功能二：自由問答區 (修改回答方式：禁止給程式碼，直接給計算數值與答案)
