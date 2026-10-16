@@ -332,42 +332,47 @@ if has_input:
         st.markdown("---")
         st.subheader("📄 步驟 5：匯出分析報告")
         if st.button("📝 產生無母數迴歸分析 Markdown 報告"):
-            with st.spinner("Agent 正在彙整對話、統計理論與實作結果為報告中..."):
-                # 📌 給予絕對固定的 Markdown 範本，強制 AI 只能填空，確保每次報告長得一模一樣
-                report_prompt = (
-                    "請根據我們剛才的對話與實作結果，產生一份【格式絕對固定】的 Markdown 報告。\n"
-                    "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題或改變排版！\n\n"
-                    "```markdown\n"
-                    "# 無母數迴歸分析實驗報告\n\n"
-                    "## 1. 實驗目的與概念\n"
-                    "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
-                    "## 2. 數據摘要\n"
-                    "- **資料特性**：[簡述資料筆數與變數 X, Y 的意義]\n\n"
-                    "## 3. 超參數決策\n"
-                    "- **選擇的 Kernel (核函數)**：[填寫剛剛選擇的 Kernel]\n"
-                    "- **選擇的 Bandwidth (頻寬)**：[填寫剛剛選擇的 h 數值或演算法]\n"
-                    "- **決策理由**：[簡述為什麼這樣選，以及預期平滑度表現]\n\n"
-                    "## 4. 數學原理與邊界偏差\n"
-                    "NW 迴歸的估計式為：\n"
-                    "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
-                    "**邊界偏差注意**：[請用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
-                    "## 5. R 語言實作關鍵程式碼\n"
-                    "```r\n"
-                    "[請貼上剛剛執行的完整 R 程式碼]\n"
-                    "```\n\n"
-                    "## 6. 結論與預測\n"
-                    "- **預測結果**：[若剛剛有輸入預測 X，請填寫 X=? 時，預測 Y=?。若無預測則寫無]\n"
-                    "- **綜合結論**：[請根據畫出來的圖表趨勢，用一句話做總結]\n"
-                    "```\n"
-                )
-                try:
-                    rep_res = send_msg_smart(report_prompt, config)
-                    # 清除可能多餘的 Markdown code block 標記
-                    clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
-                    st.session_state.report_content = clean_report
-                    st.success("報告產生成功！請至下方檢視與下載。")
-                except Exception as e:
-                    st.error(f"報告生成失敗：{e}")
+        # 確保抓到畫面上最新的選擇參數
+        clean_kernel = selected_kernel.split(" ")[0]
+        with st.spinner("Agent 正在彙整真實資料與實作結果為報告中..."):
+            
+            # 🌟 關鍵修復：把真實資料、選定的 Kernel、Bandwidth 和預測 X 全部綁進去！
+            report_prompt = (
+                f"{st.session_state.raw_data_instruction}\n"
+                f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，並預測 X = {predict_x}。\n\n"
+                "請根據以上「真實數據」與「參數選擇」，為我撰寫一份【格式絕對固定】的無母數迴歸分析 Markdown 報告。\n"
+                "【強制規定】：你必須完全照抄下方的 Markdown 標題與結構，只能替換中括號 `[...]` 內的內容，絕對不准自己發明新標題、改變排版，更【絕對不准編造任何假資料】！\n\n"
+                "```markdown\n"
+                "# 無母數迴歸分析實驗報告\n\n"
+                "## 1. 實驗目的與概念\n"
+                "本實驗旨在透過 Nadaraya-Watson (NW) 核迴歸進行無母數估計。[請用一句話簡述 NW 迴歸的核心精神]\n\n"
+                "## 2. 數據摘要\n"
+                "- **資料特性**：[根據上方傳入的真實資料，說明資料筆數與數據範圍]\n\n"
+                "## 3. 超參數決策\n"
+                "- **選擇的 Kernel (核函數)**：[填寫上方系統提示的 Kernel]\n"
+                "- **選擇的 Bandwidth (頻寬)**：[填寫上方系統提示的 Bandwidth]\n"
+                "- **決策理由**：[簡述這個組合對平滑度的影響]\n\n"
+                "## 4. 數學原理與邊界偏差\n"
+                "NW 迴歸的估計式為：\n"
+                "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
+                "**邊界偏差注意**：[用一句話說明邊界偏差 Boundary Bias 的發生原因]\n\n"
+                "## 5. R 語言實作關鍵程式碼\n"
+                "```r\n"
+                "[請貼上使用真實資料與上述參數的完整 R 繪圖程式碼]\n"
+                "```\n\n"
+                "## 6. 結論與預測\n"
+                "- **預測結果**：[請利用真實資料算出 X 預測點的 Y 值並填入。若 X=0 且不在資料合理範圍內，請填寫無]\n"
+                "- **綜合結論**：[請根據真實數據畫出來的趨勢做一句話總結]\n"
+                "```\n"
+            )
+            try:
+                rep_res = send_msg_smart(report_prompt, config)
+                # 清除可能多餘的 Markdown code block 標記，確保排版乾淨
+                clean_report = rep_res.text.strip().removeprefix("```markdown").removesuffix("```").strip()
+                st.session_state.report_content = clean_report
+                st.success("報告產生成功！請至下方檢視與下載。")
+            except Exception as e:
+                st.error(f"報告生成失敗：{e}")
 
         # 如果已經產生報告，就顯示預覽與下載按鈕
         if st.session_state.report_content:
@@ -381,23 +386,27 @@ if has_input:
                 type="primary"
             )
 
-    # 🌟 功能二：自由問答區 (升級版：背景夾帶真實資料記憶)
+    # 🌟 功能二：自由問答區 (加入當前參數狀態，防止 AI 跳針要你重選)
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         with st.chat_message("user"):
             st.markdown(user_input)
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # 📌 關鍵修復：在問答區的對話後面，偷偷夾帶原始資料的死命令
+        # 取得當前 UI 面板上的狀態
+        current_kernel = selected_kernel.split(" ")[0]
+        
+        # 📌 關鍵修復：偷偷告訴 AI 目前的參數，並下達「絕對不要再叫學生選」的死命令
         qa_prompt = (
-            f"{user_input}\n\n"
-            f"[系統強制提示：若學生的問題需要進行預測、計算或寫 R 程式碼，絕對不准自己編造假資料，"
-            f"必須嚴格遵守以下真實資料設定來進行計算：\n{st.session_state.raw_data_instruction}]"
+            f"學生提問：{user_input}\n\n"
+            f"[系統強制提示：\n"
+            f"1. 學生目前已經在面板選擇了【{current_kernel} Kernel】與【Bandwidth = {final_bw}】。\n"
+            f"2. 我們已經進入『自由問答階段』。請直接針對學生的問題進行解答，【絕對不要】再叫學生重新選擇 Kernel 或 Bandwidth！\n"
+            f"3. 若學生的問題需要進行預測、計算或寫 R 程式碼，絕對不准自己編造假資料，必須嚴格遵守以下真實資料設定來進行計算：\n{st.session_state.raw_data_instruction}]"
         )
         
         with st.chat_message("assistant"):
             with st.spinner("助教解答中..."):
                 try:
-                    # 這裡改為送出加工過的 qa_prompt，但畫面上依然只顯示 user_input
                     response = send_msg_smart(qa_prompt, config)
                     response_text = response.text
                     st.markdown(response_text)
