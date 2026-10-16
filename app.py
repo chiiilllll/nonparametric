@@ -361,15 +361,17 @@ if has_input:
     st.markdown("---")
     st.subheader("💬 步驟 3：Agent 教學與互動區")
 
-    # 渲染歷史對話與圖表
+    # 確保步驟 3 的歷史對話與圖表一定會被完整印在畫面上
     for msg in st.session_state.get("messages", []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if "img_path" in msg:
                 st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    # 🌟 加上防呆：唯有當 Agent 已經在步驟 3 產出教學內容後，步驟 4 才會顯示
-    if st.session_state.get("messages"):
+    # ==========================================
+    # 🎛️ 步驟 4：參數選擇區 (嚴格規定：必須等步驟 3 有對話內容後才能出現)
+    # ==========================================
+    if len(st.session_state.get("messages", [])) > 0:
         st.markdown("---")
         st.subheader("🎛️ 步驟 4：參數選擇區 (請依據上方教學選擇)")
         
@@ -388,7 +390,6 @@ if has_input:
                 final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
 
         predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
-
     # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值
     if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
         st.session_state.nw_executed = True  # 解鎖步驟 5
