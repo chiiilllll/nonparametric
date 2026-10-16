@@ -462,11 +462,6 @@ if has_input:
     # ==========================================
     # 🌟 底部聊天輸入框
     # ==========================================
-    for msg in st.session_state.get("messages", []):
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if "img_path" in msg:
-                st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
         st.session_state.messages.append({"role": "user", "content": user_input})
