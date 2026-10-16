@@ -111,8 +111,10 @@ def execute_r_code_and_get_image(r_code, predict_x=None):
             if (!is.na(pred_y)) {{
                 cat(paste0("R_PRED_VAL:", pred_y))
                 # 🌟 自動在圖表上標註預測點與文字標籤
-                points(x0, pred_y, col = "red", pch = 19, cex = 1.5)
-                text(x0, pred_y, labels = sprintf("Pred at X=%.1f (Y=%.2f)", x0, pred_y), pos = 3, col = "red", font = 2)
+                tryCatch({{
+                    legend("topright", legend = c("Data points", "NW Estimate", sprintf("Prediction at X=%.1f (Y=%.2f)", x0, pred_y)), 
+                           col = c("black", "blue", "red"), lty = c(NA, 1, NA), pch = c(1, NA, 19), bty = "n")
+                }}, error = function(e2) {{}})
             }}
         }}, error = function(e) {{}} )
         """
