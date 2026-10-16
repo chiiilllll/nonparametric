@@ -72,51 +72,6 @@ def execute_r_code_and_get_image(r_code, predict_x=None):
     unique_id = int(time.time() * 1000)
     plot_filename = f"plot_{unique_id}.png"
 
-    prediction_script = ""
-    if predict_x is not None:
-        prediction_script = f"""
-        tryCatch({{
-            # 優先使用 R 內建的 ksmooth 計算精準預測值
-            res_ks <- ksmooth(X, Y, kernel = "normal", bandwidth = h, x.points = {predict_x})
-            pred_y <- res_ks$y
-            if (!is.na(pred_y)) {{
-                cat(paste0("R_PRED_VAL:", pred_y))
-            }}
-        }}, error = function(e) {{}} )
-        """
-
-    wrapped_r_script = f"""
-    options(warn=-1)
-    png('{plot_filename}', width=800, height=550, res=110)
-    set.seed(42)
-    {r_code}
-    {prediction_script}
-    dev.off()
-    """
-
-    with open("temp_script.R", "w", encoding="utf-8") as f:
-        f.write(wrapped_r_script)
-
-    predicted_y_from_r = None
-    try:
-        result = subprocess.run(
-            ["Rscript", "temp_script.R"], capture_output=True, text=True, timeout=30
-        )
-        
-        if result.stdout and "R_PRED_VAL:" in result.stdout:
-            for line in result.stdout.split("\n"):
-                if "R_PRED_VAL:" in line:
-                    predicted_y_from_r = line.split("R_PRED_VAL:")[1].strip()
-
-        if os.path.exists(plot_filename):
-            import shutil
-            shutil.copy(plot_filename, "permanent_plot.png")
-            return plot_filename, None, predicted_y_from_r
-        else:
-            return None, result.stderr, None
-    except Exception as e:
-        return None, str(e), None
-
     # 🌟 透過 R 語言的數學公式與當前頻寬、核函數，精準計算給定 X 的預測值 Y
     prediction_script = ""
     if predict_x is not None:
