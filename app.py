@@ -446,20 +446,25 @@ if has_input:
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
-    # 🌟 功能三：產出 Markdown 實驗報告 (移除預覽畫面，直接提供下載)
+    # 🌟 功能三：產出 Markdown 實驗報告 (加入關閉按鈕，讓它不再卡在畫面)
     if st.session_state.nw_executed:
         st.markdown("---")
-        st.subheader("📄 步驟 5：匯出分析報告")
+        col_r1, col_r2 = st.columns([4, 1])
+        with col_r1:
+            st.subheader("📄 步驟 5：匯出分析報告")
+        with col_r2:
+            if st.button("❌ 關閉報告面板"):
+                st.session_state.nw_executed = False
+                st.session_state.report_content = ""
+                st.rerun()
         
         if st.button("📝 產生並準備無母數迴歸分析 Markdown 報告", type="primary"):
             clean_kernel = selected_kernel.split(" ")[0]
-            with st.spinner("Agent 正在封裝真實資料、圖表與精準預測值為報告中..."):
+            with st.spinner("Agent 正在封裝真實資料與精準預測值為報告中..."):
                 
-                # 確保報告永遠抓取當前最新的永久圖檔進行 Base64 編碼
-                img_base64_str = get_image_base64("permanent_plot.png")
-                img_markdown_tag = f"![NW Regression Plot](data:image/png;base64,{img_base64_str})" if img_base64_str else "[圖表生成中]"
                 final_y_val = st.session_state.get("exact_pred_y", "無")
 
+                # 🌟 移除容易造成亂碼的 base64 圖片，改以乾淨俐落的純文字報告呈現
                 report_prompt = (
                     f"{st.session_state.raw_data_instruction}\n"
                     f"【系統提示】：學生最終選擇了 {clean_kernel} Kernel、Bandwidth = {final_bw}，給定預測 X = {predict_x}，且 R 計算出的精準預測值為 {final_y_val}。\n\n"
@@ -475,10 +480,9 @@ if has_input:
                     "- **選擇的 Bandwidth (頻寬)**：[填寫 {final_bw}]\n\n"
                     "## 4. 數學原理與邊界偏差\n"
                     "NW 迴歸估計式：\n"
-                    "$$\\hat{m}_h(x) = \\frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
-                    "## 5. R 語言實作與視覺化結果\n"
-                    "**執行結果圖表**：\n"
-                    f"{img_markdown_tag}\n\n"
+                    "$$\\hat{m}_h(x) = \frac{\\sum_{i=1}^n K_h(x - X_i) Y_i}{\\sum_{i=1}^n K_h(x - X_i)}$$\n\n"
+                    "## 5. R 語言實作關鍵程式碼\n"
+                    "[請在此處附上您的 R 程式碼與圖表]\n\n"
                     "## 6. 結論與預測\n"
                     f"- **給定 X = {predict_x} 之預測結果**：Y = {final_y_val}\n"
                     "- **綜合結論**：[根據圖表趨勢做一句話總結]\n"
@@ -492,27 +496,37 @@ if has_input:
                 except Exception as e:
                     st.error(f"報告生成失敗：{e}")
 
-        # 直接顯示下載按鈕，拿掉佔空間的預覽區
         if st.session_state.report_content:
             st.download_button(
                 label="📥 下載完整 Markdown 實驗報告 (.md)",
-                data=st.session_state.report_content,
+                data=st.session_state.report_content.encode('utf-8'),
                 file_name="NW_Regression_Lab_Report.md",
-                mime="text/markdown",
+                mime="text/markdown; charset=utf-8",
                 type="primary",
                 use_container_width=True
             )
-
     # 🌟 功能二：自由問答區 (強制禁止解釋過程，要求直接給精準數值)
+    # ==========================================
+    # 🌟 底部自由問答區 (修正歷史紀錄消失的問題)
+    # ==========================================
+    st.markdown("---")
+    st.subheader("💬 自由問答互動區")
+
+    # 1. 先在最下方渲染所有的歷史對話（確保最新問答不會被洗掉）
+    for msg in st.session_state.get("messages", []):
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if "img_path" in msg:
+                st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
+
+    # 2. 接收當下輸入的問答
     if user_input := st.chat_input("對剛才的實作或無母數統計有任何疑問嗎？隨時向助教發問..."):
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        # 先把使用者訊息放入 session
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         current_kernel = selected_kernel.split(" ")[0]
         cached_y = st.session_state.get("exact_pred_y", "無")
         
-        # 📌 終極死命令：絕對不准講廢話與解釋公式，直接給答案！
         qa_prompt = (
             f"學生提問：{user_input}\n\n"
             f"[系統強制鐵律：\n"
@@ -530,5 +544,6 @@ if has_input:
                     response_text = response.text
                     st.markdown(response_text)
                     st.session_state.messages.append({"role": "assistant", "content": response_text})
+                    st.rerun() # 重新整理以確保畫面上立刻顯示最新對話
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
