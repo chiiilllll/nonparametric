@@ -368,26 +368,26 @@ if has_input:
             if "img_path" in msg:
                 st.image(msg["img_path"], caption="R 語言 Nadaraya-Watson 繪圖結果")
 
-    st.markdown("---")
-    st.subheader("🎛️ 步驟 4：參數選擇區 (請依據上方教學選擇)")
-    
-    # UI 選單設計
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_kernel = st.selectbox(
-            "1️⃣ 選擇 Kernel 核函數", 
-            ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
-        )
-    with col2:
-        bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
-        if bw_mode == "使用演算法":
-            selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
-            final_bw = selected_bw.split(" ")[0]
-        else:
-            final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
+    # 🌟 加上防呆：唯有當 Agent 已經在步驟 3 產出教學內容後，步驟 4 才會顯示
+    if st.session_state.get("messages"):
+        st.markdown("---")
+        st.subheader("🎛️ 步驟 4：參數選擇區 (請依據上方教學選擇)")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_kernel = st.selectbox(
+                "1️⃣ 選擇 Kernel 核函數", 
+                ["Gaussian (高斯核 - 最常用)", "Epanechnikov (漸進最佳)", "Rectangular (均勻核)", "Triangular (三角核)"]
+            )
+        with col2:
+            bw_mode = st.radio("2️⃣ Bandwidth 頻寬設定方式", ["使用演算法", "手動輸入數值 (h)"])
+            if bw_mode == "使用演算法":
+                selected_bw = st.selectbox("選擇頻寬演算法", ["SJ (推薦 - 資料驅動)", "nrd0 (Silverman 經驗法則)", "ucv (無偏交叉驗證)"])
+                final_bw = selected_bw.split(" ")[0]
+            else:
+                final_bw = str(st.number_input("輸入頻寬數值 h", min_value=0.01, max_value=100.0, value=2.0, step=0.5))
 
-    # 🌟 新增功能一：給定 X 預測 Y 的輸入框
-    predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
+        predict_x = st.number_input("🎯 [選填] 給定一個 X 值，預測其對應的 Y 值：", value=0.0, step=1.0)
 
     # 🌟 修改按鈕名稱與 Prompt，要求 AI 計算預測值
     if st.button("🚀 確認參數，執行 NW 核迴歸繪圖與預測！", type="primary", use_container_width=True):
