@@ -93,7 +93,12 @@ def execute_r_code_and_get_image(r_code):
             return None, result.stderr
     except Exception as e:
         return None, str(e)
-
+# 🌟 新增：將圖表圖片轉成 Base64 字串，以便嵌入 Markdown 報告中
+def get_image_base64(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode("utf-8")
+    return ""
 # ==========================================
 # 3. 智能連線發送函式
 # ==========================================
@@ -326,12 +331,7 @@ if has_input:
                                 st.warning(f"R 繪圖執行提示：找不到資料或語法錯誤。詳細原因：\n{err}")
 
                             
-                            # 🌟 新增：把圖片轉成 Base64 格式，才能完美嵌進 Markdown 報告中
-                            def get_image_base64(image_path):
-                                if os.path.exists(image_path):
-                                    with open(image_path, "rb") as img_file:
-                                        return base64.b64encode(img_file.read()).decode("utf-8")
-                                return ""
+                            
 
 
                     st.session_state.messages.append(msg_data)
